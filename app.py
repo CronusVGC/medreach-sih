@@ -150,6 +150,9 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
           "unconscious",
           "water broke",
           "contractions",
+          "labor",
+          "child birth",
+          "delivery",
       ]
   ):
     return {
@@ -159,21 +162,28 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": 1.5,
     }
 
-  # 2. OBSTETRIC EMERGENCIES (ESI 1 / 2)
+  # 2. OBSTETRIC EMERGENCIES & ACTIVE LABOR / CHILDBIRTH (ESI 1 / 2)
   if any(
       k in t
       for k in [
-          "pregnant",
-          "pregnancy",
+          "child birth",
+          "childbirth",
+          "giving birth",
+          "birth",
+          "delivery",
+          "in labor",
           "labor",
           "water broke",
           "contractions",
+          "pregnant",
+          "pregnancy",
           "miscarriage",
           "ectopic",
           "placenta",
           "cord prolapse",
       ]
   ):
+    # ESI 1: Critical delivery / hemorrhage / precipitous delivery
     if any(
         k in t
         for k in [
@@ -184,20 +194,21 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
             "unconscious",
             "crowning",
             "head visible",
+            "cord prolapse",
         ]
     ):
       return {
           "suspected_condition": (
-              "Critical Obstetric Emergency / Imminent Delivery / Hemorrhage"
-              " (ESI-1)"
+              "Critical Obstetric Emergency / Precipitous Delivery (ESI-1)"
           ),
           "severity_score": 4.9,
       }
+    # ESI 2: Active Childbirth / Labor / Advanced Gestational Complication
     return {
         "suspected_condition": (
-            "Acute Obstetric / Pregnancy Complication (ESI-2)"
+            "Active Childbirth / Labor / Obstetric Admission (ESI-2)"
         ),
-        "severity_score": 4.5,
+        "severity_score": 4.1,
     }
 
   # 3. SPINAL & NEUROTRAUMA (ESI 2)
@@ -506,10 +517,10 @@ def get_triage(description: str, age: int, sex: str, comorbidities: str):
       "ESI CLINICAL BENCHMARKS:\n"
       "- ESI 1 (Score 4.8 - 5.0): Resuscitation / Immediate Life Threat (dying,"
       " cardiac/respiratory arrest, amputations, massive bleeding, active"
-      " obstetric hemorrhage).\n"
-      "- ESI 2 (Score 4.2 - 4.7): Emergent / High Risk (spinal cord trauma,"
-      " stroke, chest pain, compound fractures, acute ocular trauma, ectopic"
-      " pregnancy rupture / severe cramping with bleeding).\n"
+      " obstetric hemorrhage with shock).\n"
+      "- ESI 2 (Score 4.0 - 4.7): Emergent / High Risk (childbirth / active"
+      " labor / delivery, spinal trauma, stroke, chest pain, compound"
+      " fractures, acute ocular trauma, ectopic pregnancy rupture).\n"
       "- ESI 3 (Score 2.8 - 3.9): Urgent (closed fractures, blunt crush trauma,"
       " severe abdominal pain).\n"
       "- ESI 4 (Score 1.8 - 2.7): Less Urgent (simple sprains, mild fever/colds,"
@@ -577,16 +588,26 @@ with col_left:
       "Load Test Scenario",
       [
           "Custom",
+          "Active Childbirth / Delivery (28yo)",
           "Routine Antenatal Checkup (2 wks)",
           "Traumatic Amputation (Hand)",
           "Pediatric High Fever (2yo)",
           "Acute Eye Bleeding",
           "Geriatric Fall & Hip Pain (78yo)",
           "High-Speed Collision",
-          "Crush Injury (Foot)",
       ],
   )
-  if preset == "Routine Antenatal Checkup (2 wks)":
+  if preset == "Active Childbirth / Delivery (28yo)":
+    default_desc, default_age, default_sex, default_meds = (
+        (
+            "Active labor and childbirth, contractions 2 minutes apart, water"
+            " broke"
+        ),
+        28,
+        "Female",
+        "None",
+    )
+  elif preset == "Routine Antenatal Checkup (2 wks)":
     default_desc, default_age, default_sex, default_meds = (
         (
             "Routine 2-week early pregnancy checkup, general wellness"
@@ -643,16 +664,6 @@ with col_left:
             " lower extremity trauma"
         ),
         32,
-        "Male",
-        "None",
-    )
-  elif preset == "Crush Injury (Foot)":
-    default_desc, default_age, default_sex, default_meds = (
-        (
-            "20kg barbell plate dropped on barefoot, acute deformity and"
-            " inability to bear weight"
-        ),
-        26,
         "Male",
         "None",
     )
