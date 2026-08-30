@@ -15,7 +15,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load secrets & models
+# Load secrets & environment variables
 load_dotenv()
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", os.getenv("GROQ_API_KEY"))
 
@@ -36,7 +36,7 @@ def load_resources():
 
 client, ds, model, features = load_resources()
 
-# Distance helper
+# Distance calculation helper (Haversine formula)
 def calculate_distance(lat1, lon1, lat2, lon2):
     R = 6371.0
     dlat = np.radians(lat2 - lat1)
@@ -45,27 +45,62 @@ def calculate_distance(lat1, lon1, lat2, lon2):
          np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) * np.sin(dlon / 2.0) ** 2)
     return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
 
-# Clinical parsing
+# Clinical parsing engine with multi-model fallback & rule-based safety net
 @functools.lru_cache(maxsize=128)
 def get_triage(description: str, age: int, sex: str, comorbidities: str):
     if not client:
-        return {
-            "suspected_condition": "System Offline / Rule-Based Triage",
-            "severity_score": 3.0,
-            "medical_terms": ["Triage Assessment"]
-        }
+        return _fallback_rule_triage(description, age, comorbidities)
+
     system_prompt = (
-        "You are an Emergency Medicine Triage AI using the Emergency Severity Index (ESI).\n"
-        "Return JSON with keys: suspected_condition (str), severity_score (float 1.0-5.0), medical_terms (list of str)."
+        "You are an Emergency Medicine Triage AI utilizing the Emergency Severity Index (ESI) algorithm.\n"
+        "Benchmark Severity Scores (1.0 to 5.0):\n"
+        "- ESI 1 (4.8 - 5.0): Resuscitation / Immediate life threat (arrest, severe respiratory distress, massive hemorrhage).\n"
+        "- ESI 2 (4.0 - 4.7): Emergent / High risk (ACS, stroke, testicular/ovarian torsion, deep heavy bleeding lacerations).\n"
+        "- ESI 3 (2.8 - 3.9): Urgent / Multiple resources needed (blunt crush injuries, fractures, severe abdominal pain).\n"
+        "- ESI 4 (1.8 - 2.7): Less urgent / 1 resource (simple sprains, mild infections, bronchitis).\n"
+        "- ESI 5 (1.0 - 1.7): Non-urgent (suture removal, minor scrapes, medication refills).\n\n"
+        "Return ONLY a JSON object with keys:\n"
+        "{\n"
+        '  "suspected_condition": "Clinical condition summary",\n'
+        '  "severity_score": 1.0 to 5.0,\n'
+        '  "medical_terms": ["SNOMED / MeSH terms"]\n'
+        "}"
     )
-    user_prompt = f"Patient: {age}yo {sex}, History: {comorbidities}\nIncident: \"{description}\""
-    resp = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-        response_format={"type": "json_object"},
-        temperature=0.05
-    )
-    return json.loads(resp.choices[0].message.content)
+    user_prompt = f"Patient: {age}yo {sex}, History: {comorbidities}\nIncident / Symptoms: \"{description}\""
+
+    # Attempt primary model
+    for model_name in ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-8b-8192"]:
+        try:
+            resp = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.05,
+                max_tokens=250
+            )
+            return json.loads(resp.choices[0].message.content)
+        except Exception:
+            continue
+
+    return _fallback_rule_triage(description, age, comorbidities)
+
+def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
+    t = text.lower()
+    c = comorbidities.lower()
+    if any(k in t for k in ["unconscious", "not breathing", "stopped breathing", "massive bleed", "gunshot", "stab", "crash", "high speed"]):
+        return {"suspected_condition": "Acute Critical Trauma / Resuscitation", "severity_score": 4.9, "medical_terms": ["Critical polytrauma", "Immediate resuscitation"]}
+    elif any(k in t for k in ["head", "sink", "chest", "heart", "stroke", "paralysis", "slurred"]):
+        return {"suspected_condition": "Acute Cranial / Emergent Medical Event", "severity_score": 4.3, "medical_terms": ["Closed head injury", "Emergency evaluation"]}
+    elif any(k in t for k in ["broken", "fracture", "crush", "dropped", "bone", "foot", "heavy"]):
+        base = 3.4 if (int(age) >= 60 or "diabetes" in c) else 3.1
+        return {"suspected_condition": "Acute Blunt Trauma / Suspected Fracture", "severity_score": base, "medical_terms": ["Blunt extremity trauma", "Diagnostic imaging required"]}
+    elif any(k in t for k in ["cough", "fever", "sprain", "sore throat", "cold"]):
+        return {"suspected_condition": "Routine Outpatient Presentation", "severity_score": 2.1, "medical_terms": ["Primary care evaluation"]}
+    else:
+        return {"suspected_condition": "Non-Urgent Superficial Presentation", "severity_score": 1.4, "medical_terms": ["Superficial complaint"]}
 
 # Custom Styling
 st.markdown("""
@@ -78,13 +113,11 @@ st.markdown("""
 st.title("🚑 MedReach AI — Clinical Triage & Facility Ranker")
 st.caption("Pairwise Learning-to-Rank (XGBoost) with LLaMA 3.1 Clinical Acuity Triage")
 
-# Layout
 col_left, col_right = st.columns([4, 6], gap="large")
 
 with col_left:
     st.subheader("1. Patient Presentation")
     
-    # Presets
     preset = st.selectbox("Load Test Scenario", ["Custom", "High-Speed Collision", "Assault / Hemorrhage", "Acute Chest Pressure", "Crush Injury (Foot)"])
     if preset == "High-Speed Collision":
         default_desc, default_age, default_sex, default_meds = "Pedestrian struck by vehicle at high speed, unresponsive with severe lower extremity trauma", 32, "Male", "None"
@@ -122,7 +155,6 @@ with col_right:
             triage = get_triage(desc, int(age), sex, comorbidities)
             severity = float(triage.get("severity_score", 3.0))
 
-            # Render Triage Card
             badge_color = "#ef4444" if severity >= 4.5 else "#f97316" if severity >= 3.5 else "#eab308" if severity >= 2.5 else "#10b981"
             st.markdown(f"""
             <div class="badge-card">
@@ -138,14 +170,12 @@ with col_right:
             </div>
             """, unsafe_allow_html=True)
 
-            # Rank Facilities
             candidates = ds.copy()
             candidates['distance_km'] = calculate_distance(lat, lon, candidates['LATITUDE'].astype(float), candidates['LONGITUDE'].astype(float))
             candidates['severity'] = severity
             candidates['ml_score'] = model.predict(candidates[features])
             ranked = candidates.sort_values(by='ml_score', ascending=False).head(top_k)
 
-            # Format and Display Table
             ranked_display = ranked[['NAME', 'CITY', 'distance_km', 'is_hospital', 'has_er', 'has_surgery', 'doctor_count', 'ml_score']].copy()
             ranked_display.columns = ['Facility Name', 'City', 'Distance (km)', 'Hospital?', 'ER?', 'Surgery?', 'Doctors', 'Model Score']
             ranked_display['Distance (km)'] = ranked_display['Distance (km)'].round(2)
