@@ -44,7 +44,7 @@ def load_ml_assets():
 
 ds, model, features = load_ml_assets()
 
-# Sidebar for fallback key entry & diagnostics
+# Sidebar for configuration & diagnostics
 with st.sidebar:
   st.header("⚙️ Configuration")
   sidebar_key = st.text_input(
@@ -52,7 +52,7 @@ with st.sidebar:
       type="password",
       help="Leave blank to use Streamlit Secrets",
   )
-  st.caption("Status: XGBoost Ranker Active")
+  st.caption("Status: XGBoost Ranker & Vulnerability Scaling Active")
 
 
 def get_groq_client():
@@ -73,8 +73,42 @@ def get_groq_client():
 
 
 # ---------------------------------------------------------
-# 2. DISTANCE & CLINICAL TRIAGE ENGINES
+# 2. VULNERABILITY SCALING & DISTANCE HELPERS
 # ---------------------------------------------------------
+def apply_age_vulnerability_scaling(base_score: float, age: int) -> float:
+  """Scales severity scores for vulnerable demographics (<=10 and >=50)."""
+  age_val = int(age)
+
+  if age_val <= 10:
+    # Pediatric vulnerability boost: Rapid decompensation / airway sensitivity
+    if base_score >= 2.5:
+      adjusted = base_score * 1.22 + 0.30
+    elif base_score >= 1.6:
+      adjusted = base_score * 1.15 + 0.20
+    else:
+      adjusted = base_score + 0.35
+
+  elif age_val >= 50:
+    # Mature / Geriatric vulnerability boost: Atypical presentation & comorbid risk
+    if age_val >= 70:
+      age_factor, offset = 1.25, 0.35
+    else:
+      age_factor, offset = 1.15, 0.20
+
+    if base_score >= 2.5:
+      adjusted = base_score * age_factor + offset
+    elif base_score >= 1.6:
+      adjusted = base_score * (age_factor - 0.05) + (offset - 0.05)
+    else:
+      adjusted = base_score + 0.25
+
+  else:
+    # Standard adult demographic (11 - 49)
+    adjusted = base_score
+
+  return float(np.clip(round(adjusted, 2), 1.0, 5.0))
+
+
 def calculate_distance(lat1, lon1, lat2, lon2):
   R = 6371.0
   dlat = np.radians(lat2 - lat1)
@@ -88,6 +122,9 @@ def calculate_distance(lat1, lon1, lat2, lon2):
   return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
 
 
+# ---------------------------------------------------------
+# 3. CLINICAL TRIAGE SAFETY RULES & LLM INTEGRATION
+# ---------------------------------------------------------
 def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
   t = text.lower()
   c = comorbidities.lower()
@@ -396,9 +433,9 @@ def get_triage(description: str, age: int, sex: str, comorbidities: str):
       "  * Cardiorespiratory arrest, unresponsiveness, gunshot/stab wounds to"
       " torso/neck, airway compromise, severe anaphylaxis.\n"
       "- ESI 2 (Score 4.0 - 4.7): Emergent / High-Risk Condition\n"
-      "  * Acute snakebite / envenomation, high fever in infants/toddlers,"
-      " ocular trauma / eye bleeding, stroke symptoms, acute coronary"
-      " syndrome.\n"
+      "  * Acute snakebite / envenomation, high fever/malaria in"
+      " infants/toddlers, ocular trauma / eye bleeding, stroke symptoms, acute"
+      " coronary syndrome.\n"
       "- ESI 3 (Score 2.8 - 3.9): Urgent / Multiple Diagnostic Resources\n"
       "  * Closed fractures, blunt crush trauma without complete"
       " devascularization, severe abdominal pain, kidney stones.\n"
@@ -450,7 +487,7 @@ def get_triage(description: str, age: int, sex: str, comorbidities: str):
 
 
 # ---------------------------------------------------------
-# 3. USER INTERFACE & LAYOUT
+# 4. USER INTERFACE & DISPATCH PIPELINE
 # ---------------------------------------------------------
 st.markdown(
     """
@@ -464,8 +501,8 @@ st.markdown(
 
 st.title("🚑 MedReach AI — Clinical Triage & Facility Ranker")
 st.caption(
-    "Pairwise Learning-to-Rank (XGBoost) with LLaMA 3.3/3.1 Clinical Acuity"
-    " Triage"
+    "Pairwise Learning-to-Rank (XGBoost) with LLaMA 3.3/3.1 Clinical Triage &"
+    " Age-Vulnerability Scaling"
 )
 
 col_left, col_right = st.columns([4, 6], gap="large")
@@ -480,6 +517,7 @@ with col_left:
           "Traumatic Amputation (Hand)",
           "Pediatric Malaria (2yo)",
           "Acute Eye Bleeding",
+          "Geriatric Fall & Hip Pain (78yo)",
           "High-Speed Collision",
           "Crush Injury (Foot)",
       ],
@@ -513,6 +551,16 @@ with col_left:
         29,
         "Male",
         "None",
+    )
+  elif preset == "Geriatric Fall & Hip Pain (78yo)":
+    default_desc, default_age, default_sex, default_meds = (
+        (
+            "Ground-level mechanical fall, acute groin deformity, severe hip"
+            " pain and inability to bear weight"
+        ),
+        78,
+        "Female",
+        "Osteoporosis, Hypertension",
     )
   elif preset == "High-Speed Collision":
     default_desc, default_age, default_sex, default_meds = (
@@ -574,10 +622,13 @@ with col_left:
 with col_right:
   if run_btn and desc.strip():
     with st.spinner(
-        "Analyzing clinical presentation & ranking optimal facilities..."
+        "Analyzing clinical presentation & applying vulnerability scaling..."
     ):
       triage = get_triage(desc, int(age), sex, comorbidities)
-      severity = float(triage.get("severity_score", 3.2))
+      raw_severity = float(triage.get("severity_score", 3.2))
+
+      # Apply Demographic / Age Vulnerability Scaling
+      severity = apply_age_vulnerability_scaling(raw_severity, int(age))
 
       if severity >= 4.5:
         badge_color, badge_text = (
@@ -593,6 +644,14 @@ with col_right:
       else:
         badge_color, badge_text = "#10b981", "LEVEL 5: NON-URGENT"
 
+      age_boost_note = (
+          f"<div style='color:#38bdf8; font-size:11.5px; font-weight:600;"
+          f" margin-top:2px;'>Vulnerability Uplift: {raw_severity:.1f} →"
+          f" {severity:.1f}</div>"
+          if severity != raw_severity
+          else ""
+      )
+
       st.markdown(
           f"""
             <div class="badge-card">
@@ -601,9 +660,12 @@ with col_right:
                         <span style="font-size:11px; text-transform:uppercase; color:#38bdf8; font-weight:700; letter-spacing:0.05em;">{triage.get('source', 'Clinical Evaluation')}</span>
                         <h3 style="margin:2px 0 0 0; color:#f8fafc; font-size:18px;">{triage.get('suspected_condition', 'Evaluated')}</h3>
                     </div>
-                    <span style="background:{badge_color}22; color:{badge_color}; border:1px solid {badge_color}; padding:5px 12px; border-radius:6px; font-weight:700; font-size:12px;">
-                        {badge_text} ({severity:.1f} / 5.0)
-                    </span>
+                    <div style="text-align:right;">
+                        <span style="background:{badge_color}22; color:{badge_color}; border:1px solid {badge_color}; padding:5px 12px; border-radius:6px; font-weight:700; font-size:12px;">
+                            {badge_text} ({severity:.1f} / 5.0)
+                        </span>
+                        {age_boost_note}
+                    </div>
                 </div>
                 <div style="margin-top:12px; font-size:13px; color:#94a3b8;">
                     <strong>SNOMED-CT Terms:</strong> {", ".join(triage.get('medical_terms', []))}
@@ -613,7 +675,7 @@ with col_right:
           unsafe_allow_html=True,
       )
 
-      # XGBoost Ranking
+      # XGBoost Ranking with Scaled Severity
       candidates = ds.copy()
       candidates["distance_km"] = calculate_distance(
           lat,
