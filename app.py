@@ -44,17 +44,32 @@ def load_ml_assets():
 
 ds, model, features = load_ml_assets()
 
+# Sidebar for fallback key entry & diagnostics
+with st.sidebar:
+  st.header("⚙️ Configuration")
+  sidebar_key = st.text_input(
+      "Groq API Key (Optional Override)",
+      type="password",
+      help="Leave blank to use Streamlit Secrets",
+  )
+  st.caption("Status: XGBoost Ranker Loaded")
+
 
 def get_groq_client():
   api_key = None
-  if "GROQ_API_KEY" in st.secrets:
-    api_key = st.secrets["GROQ_API_KEY"]
-  elif os.getenv("GROQ_API_KEY"):
-    api_key = os.getenv("GROQ_API_KEY")
+  if sidebar_key and sidebar_key.strip():
+    api_key = sidebar_key.strip()
+  elif "GROQ_API_KEY" in st.secrets and st.secrets["GROQ_API_KEY"].strip():
+    api_key = st.secrets["GROQ_API_KEY"].strip()
+  elif os.getenv("GROQ_API_KEY") and os.getenv("GROQ_API_KEY").strip():
+    api_key = os.getenv("GROQ_API_KEY").strip()
 
-  if not api_key or api_key.strip() == "":
-    return None
-  return Groq(api_key=api_key.strip())
+  if not api_key:
+    return None, "No API Key found in st.secrets, .env, or sidebar."
+  try:
+    return Groq(api_key=api_key), None
+  except Exception as e:
+    return None, str(e)
 
 
 # ---------------------------------------------------------
@@ -76,8 +91,26 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
   t = text.lower()
   c = comorbidities.lower()
+  age_val = int(age)
 
-  # ESI 1: Immediate Resuscitation / Arrest / Unresponsive / Massive Trauma
+  # Pediatric High-Risk Infections / Malaria / High Fever
+  if (
+      any(k in t for k in ["malaria", "dengue", "sepsis", "convulsion", "fits"])
+      or (age_val <= 5 and any(k in t for k in ["fever", "lethargic", "vomit"]))
+  ):
+    return {
+        "suspected_condition": (
+            "Pediatric Acute Febrile Illness / Suspected Severe Malaria"
+        ),
+        "severity_score": 4.4,
+        "medical_terms": [
+            "Severe pediatric malaria / febrile illness",
+            "Urgent clinical stabilization required",
+        ],
+        "source": "Clinical Rule-Based Safety Engine",
+    }
+
+  # ESI 1: Immediate Resuscitation / Arrest / Massive Trauma
   if any(
       k in t
       for k in [
@@ -90,29 +123,54 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
           "massive bleed",
           "bleeding heavily",
           "blood everywhere",
-          "blood",
           "gunshot",
           "stab",
           "crash",
           "high speed",
-          "accident",
           "collision",
           "hemorrhage",
       ]
   ):
     return {
         "suspected_condition": (
-            "Cardiorespiratory Arrest / Major Trauma (ESI 1)"
+            "Cardiorespiratory Arrest / Major Critical Trauma"
         ),
         "severity_score": 5.0,
         "medical_terms": [
             "Apparent clinical arrest / Severe hemorrhage",
-            "Immediate resuscitation required",
+            "Immediate life support required",
         ],
-        "source": "Clinical Triage Engine",
+        "source": "Clinical Rule-Based Safety Engine",
     }
+
+  # Ocular Trauma / Bleeding Eyes
+  if any(k in t for k in ["eye", "ocular", "vision", "blind", "cornea"]) and any(
+      k in t for k in ["bleed", "blood", "cut", "penetrat", "trauma", "pain"]
+  ):
+    return {
+        "suspected_condition": "Acute Ocular Trauma / Intraocular Hemorrhage",
+        "severity_score": 4.1,
+        "medical_terms": [
+            "Traumatic hyphema / Ocular hemorrhage",
+            "Urgent ophthalmologic surgical assessment",
+        ],
+        "source": "Clinical Rule-Based Safety Engine",
+    }
+
+  # General Bleeding / Lacerations
+  if any(k in t for k in ["bleed", "bleeding", "blood"]):
+    return {
+        "suspected_condition": "Active External Hemorrhage / Acute Laceration",
+        "severity_score": 3.8,
+        "medical_terms": [
+            "Active hemorrhage",
+            "Wound exploration and hemostasis",
+        ],
+        "source": "Clinical Rule-Based Safety Engine",
+    }
+
   # ESI 2: High Risk / Cranial / Cardiac
-  elif any(
+  if any(
       k in t
       for k in [
           "head",
@@ -131,12 +189,13 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": 4.3,
         "medical_terms": [
             "Closed head injury",
-            "Emergency evaluation required",
+            "Emergency neurological/cardiac evaluation",
         ],
-        "source": "Clinical Triage Engine",
+        "source": "Clinical Rule-Based Safety Engine",
     }
+
   # ESI 3: Urgent / Blunt / Fracture
-  elif any(
+  if any(
       k in t
       for k in [
           "broken",
@@ -152,7 +211,11 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
           "stomach",
       ]
   ):
-    base = 3.5 if (int(age) >= 60 or "diabetes" in c or "hypertension" in c) else 3.2
+    base = (
+        3.6
+        if (age_val >= 60 or "diabetes" in c or "hypertension" in c)
+        else 3.2
+    )
     return {
         "suspected_condition": "Acute Blunt Extremity Trauma / Fracture",
         "severity_score": base,
@@ -160,10 +223,11 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
             "Blunt orthopedic trauma",
             "Diagnostic radiography indicated",
         ],
-        "source": "Clinical Triage Engine",
+        "source": "Clinical Rule-Based Safety Engine",
     }
+
   # ESI 4: Less Urgent / Outpatient
-  elif any(
+  if any(
       k in t
       for k in [
           "cough",
@@ -185,51 +249,53 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
             "Superficial contusion",
             "Primary outpatient evaluation",
         ],
-        "source": "Clinical Triage Engine",
+        "source": "Clinical Rule-Based Safety Engine",
     }
+
   # ESI 5: Non-Urgent
-  else:
-    return {
-        "suspected_condition": "Non-Urgent Presentation",
-        "severity_score": 1.4,
-        "medical_terms": ["Superficial complaint"],
-        "source": "Clinical Triage Engine",
-    }
+  return {
+      "suspected_condition": "Non-Urgent Superficial Presentation",
+      "severity_score": 1.4,
+      "medical_terms": ["Superficial minor complaint"],
+      "source": "Clinical Rule-Based Safety Engine",
+  }
 
 
-@functools.lru_cache(maxsize=128)
 def get_triage(description: str, age: int, sex: str, comorbidities: str):
-  client = get_groq_client()
+  client, error_msg = get_groq_client()
 
   if not client:
-    return _fallback_rule_triage(description, age, comorbidities)
+    res = _fallback_rule_triage(description, age, comorbidities)
+    res["source"] = f"Safety Engine (API Key Note: {error_msg})"
+    return res
 
   system_prompt = (
-      "You are an expert Emergency Medicine Triage Physician AI utilizing the"
-      " Emergency Severity Index (ESI) algorithm.\n"
-      "Evaluate the patient's presentation accurately.\n\n"
-      "ESI Benchmarks:\n"
-      "- ESI 1 (4.8 - 5.0): Resuscitation / Immediate life threat (cardiac"
-      " arrest, reported dead/unresponsive, severe respiratory distress, massive"
-      " hemorrhage, high-speed polytrauma).\n"
-      "- ESI 2 (4.0 - 4.7): Emergent / High risk (acute chest pain, stroke"
-      " signs, deep heavy bleeding lacerations, acute severe head trauma).\n"
-      "- ESI 3 (2.8 - 3.9): Urgent (fractures, joint dislocations, severe blunt"
-      " crush injury, moderate-to-severe abdominal pain).\n"
-      "- ESI 4 (1.8 - 2.7): Less urgent (low-velocity falls, minor sprains,"
-      " uncomplicated lacerations, bronchitis).\n"
-      "- ESI 5 (1.0 - 1.7): Non-urgent (minor scratches, suture removal,"
-      " routine medication refill).\n\n"
-      "Return ONLY a JSON object:\n"
+      "You are an expert Emergency Medicine Triage Physician AI using the"
+      " Emergency Severity Index (ESI).\n\n"
+      "ESI Algorithmic Benchmarks (Score 1.0 to 5.0):\n"
+      "- ESI 1 (4.8 - 5.0): Resuscitation / Immediate Life Threat (cardiac/resp"
+      " arrest, unresponsive, massive uncontrolled bleeding, severe trauma).\n"
+      "- ESI 2 (4.0 - 4.7): Emergent / High-Risk (pediatric malaria / severe"
+      " fever in infants, acute eye bleeding / ocular trauma, acute coronary"
+      " syndrome, stroke, testicular torsion, deep arterial/venous"
+      " lacerations).\n"
+      "- ESI 3 (2.8 - 3.9): Urgent / Multiple resources (active moderate"
+      " bleeding, closed fractures, crush trauma, kidney stones, acute"
+      " abdominal pain).\n"
+      "- ESI 4 (1.8 - 2.7): Less Urgent (simple joint sprains, low-speed bike"
+      " spill, mild UTI, uncomplicated cuts).\n"
+      "- ESI 5 (1.0 - 1.7): Non-urgent (minor superficial scratch, suture"
+      " removal, cold refill).\n\n"
+      "Respond ONLY with a valid JSON object:\n"
       "{\n"
-      '  "suspected_condition": "Precise clinical impression summary",\n'
+      '  "suspected_condition": "Specific clinical diagnostic impression",\n'
       '  "severity_score": float between 1.0 and 5.0,\n'
-      '  "medical_terms": ["SNOMED-CT / MeSH clinical concepts"]\n'
+      '  "medical_terms": ["2-3 SNOMED-CT clinical terms"]\n'
       "}"
   )
   user_prompt = (
-      f"Patient: {age}yo {sex}, Medical History: {comorbidities}\nChief"
-      f' Complaint / Incident: "{description}"'
+      f"Patient Profile: {age} years old, {sex}, History: {comorbidities}\n"
+      f'Incident / Symptoms Reported: "{description}"'
   )
 
   active_models = [
@@ -237,6 +303,7 @@ def get_triage(description: str, age: int, sex: str, comorbidities: str):
       "llama-3.1-8b-instant",
       "mixtral-8x7b-32768",
   ]
+  last_err = ""
 
   for model_id in active_models:
     try:
@@ -253,10 +320,14 @@ def get_triage(description: str, age: int, sex: str, comorbidities: str):
       data = json.loads(resp.choices[0].message.content)
       data["source"] = f"LLM ({model_id})"
       return data
-    except Exception:
+    except Exception as e:
+      last_err = str(e)
       continue
 
-  return _fallback_rule_triage(description, age, comorbidities)
+  # Run safety net if all API calls failed and record the API error
+  res = _fallback_rule_triage(description, age, comorbidities)
+  res["source"] = f"Safety Engine (API Exception: {last_err[:80]})"
+  return res
 
 
 # ---------------------------------------------------------
@@ -287,38 +358,41 @@ with col_left:
       "Load Test Scenario",
       [
           "Custom",
+          "Pediatric Malaria (2yo)",
+          "Acute Eye Bleeding",
           "High-Speed Collision",
-          "Assault / Hemorrhage",
-          "Acute Chest Pressure",
           "Crush Injury (Foot)",
       ],
   )
-  if preset == "High-Speed Collision":
+  if preset == "Pediatric Malaria (2yo)":
     default_desc, default_age, default_sex, default_meds = (
         (
-            "Pedestrian struck by vehicle at high speed, unresponsive with"
-            " severe lower extremity trauma"
+            "2 year old child with persistent high fever, chills, vomiting, and"
+            " lethargy, suspected severe malaria"
+        ),
+        2,
+        "Female",
+        "None",
+    )
+  elif preset == "Acute Eye Bleeding":
+    default_desc, default_age, default_sex, default_meds = (
+        (
+            "Sustained direct trauma to left eye with active bleeding, severe"
+            " pain, and partial vision loss"
+        ),
+        29,
+        "Male",
+        "None",
+    )
+  elif preset == "High-Speed Collision":
+    default_desc, default_age, default_sex, default_meds = (
+        (
+            "Pedestrian struck by vehicle at high speed, unresponsive with open"
+            " lower extremity trauma"
         ),
         32,
         "Male",
         "None",
-    )
-  elif preset == "Assault / Hemorrhage":
-    default_desc, default_age, default_sex, default_meds = (
-        (
-            "Physical assault with deep scalp lacerations and severe active"
-            " bleeding"
-        ),
-        24,
-        "Male",
-        "None",
-    )
-  elif preset == "Acute Chest Pressure":
-    default_desc, default_age, default_sex, default_meds = (
-        "Crushing chest pressure radiating to jaw, severe sweating and dyspnea",
-        58,
-        "Male",
-        "Hypertension, Type 2 Diabetes",
     )
   elif preset == "Crush Injury (Foot)":
     default_desc, default_age, default_sex, default_meds = (
