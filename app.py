@@ -95,19 +95,29 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
 
   # Pediatric High-Risk Infections / Malaria / High Fever
   if (
-      any(k in t for k in ["malaria", "dengue", "sepsis", "convulsion", "fits"])
+      any(
+          k in t
+          for k in [
+              "malaria",
+              "dengue",
+              "sepsis",
+              "convulsion",
+              "fits",
+              "typhoid",
+          ]
+      )
       or (age_val <= 5 and any(k in t for k in ["fever", "lethargic", "vomit"]))
   ):
     return {
         "suspected_condition": (
-            "Pediatric Acute Febrile Illness / Suspected Severe Malaria"
+            "Pediatric Acute Febrile Illness / Suspected Severe Infection"
         ),
         "severity_score": 4.4,
         "medical_terms": [
-            "Severe pediatric malaria / febrile illness",
+            "Severe pediatric febrile syndrome",
             "Urgent clinical stabilization required",
         ],
-        "source": "Clinical Rule-Based Safety Engine",
+        "source": "Clinical Safety Engine",
     }
 
   # ESI 1: Immediate Resuscitation / Arrest / Massive Trauma
@@ -137,10 +147,10 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         ),
         "severity_score": 5.0,
         "medical_terms": [
-            "Apparent clinical arrest / Severe hemorrhage",
-            "Immediate life support required",
+            "Apparent clinical arrest / Massive trauma",
+            "Immediate advanced life support required",
         ],
-        "source": "Clinical Rule-Based Safety Engine",
+        "source": "Clinical Safety Engine",
     }
 
   # Ocular Trauma / Bleeding Eyes
@@ -149,12 +159,12 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
   ):
     return {
         "suspected_condition": "Acute Ocular Trauma / Intraocular Hemorrhage",
-        "severity_score": 4.1,
+        "severity_score": 4.2,
         "medical_terms": [
-            "Traumatic hyphema / Ocular hemorrhage",
-            "Urgent ophthalmologic surgical assessment",
+            "Traumatic hyphema / Ocular injury",
+            "Urgent ophthalmologic surgical evaluation",
         ],
-        "source": "Clinical Rule-Based Safety Engine",
+        "source": "Clinical Safety Engine",
     }
 
   # General Bleeding / Lacerations
@@ -166,7 +176,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
             "Active hemorrhage",
             "Wound exploration and hemostasis",
         ],
-        "source": "Clinical Rule-Based Safety Engine",
+        "source": "Clinical Safety Engine",
     }
 
   # ESI 2: High Risk / Cranial / Cardiac
@@ -191,7 +201,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
             "Closed head injury",
             "Emergency neurological/cardiac evaluation",
         ],
-        "source": "Clinical Rule-Based Safety Engine",
+        "source": "Clinical Safety Engine",
     }
 
   # ESI 3: Urgent / Blunt / Fracture
@@ -223,41 +233,65 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
             "Blunt orthopedic trauma",
             "Diagnostic radiography indicated",
         ],
-        "source": "Clinical Rule-Based Safety Engine",
+        "source": "Clinical Safety Engine",
     }
 
-  # ESI 4: Less Urgent / Outpatient
+  # ESI 4: Less Urgent / Outpatient (Explicit Minor Keywords)
   if any(
       k in t
       for k in [
           "cough",
-          "fever",
+          "mild fever",
           "sprain",
           "sore throat",
           "cold",
-          "ear",
-          "infection",
+          "ear ache",
+          "mild headache",
           "cycle",
           "bike",
           "fell",
       ]
   ):
     return {
-        "suspected_condition": "Low-Velocity Mechanical Fall / Routine Care",
+        "suspected_condition": "Low-Velocity Mechanical Injury / Routine Care",
         "severity_score": 2.2,
         "medical_terms": [
             "Superficial contusion",
             "Primary outpatient evaluation",
         ],
-        "source": "Clinical Rule-Based Safety Engine",
+        "source": "Clinical Safety Engine",
     }
 
-  # ESI 5: Non-Urgent
+  # ESI 5: Explicitly Minor Complaints
+  if any(
+      k in t
+      for k in [
+          "papercut",
+          "scratch",
+          "suture removal",
+          "refill",
+          "rash",
+          "minor scratch",
+      ]
+  ):
+    return {
+        "suspected_condition": "Minor Non-Urgent Presentation",
+        "severity_score": 1.4,
+        "medical_terms": ["Superficial minor complaint"],
+        "source": "Clinical Safety Engine",
+    }
+
+  # CLINICAL SAFE DEFAULT: Assume ESI 3 (Urgent / Undifferentiated) rather than superficial
   return {
-      "suspected_condition": "Non-Urgent Superficial Presentation",
-      "severity_score": 1.4,
-      "medical_terms": ["Superficial minor complaint"],
-      "source": "Clinical Rule-Based Safety Engine",
+      "suspected_condition": (
+          "Undifferentiated Acute Presentation / Diagnostic Workup Indicated"
+      ),
+      "severity_score": 3.2,
+      "medical_terms": [
+          "Unspecified clinical presentation",
+          "Comprehensive diagnostic triage recommended",
+      ],
+      "source": "Clinical Safety Engine (Default Urgent Baseline)",
   }
 
 
@@ -271,22 +305,22 @@ def get_triage(description: str, age: int, sex: str, comorbidities: str):
 
   system_prompt = (
       "You are an expert Emergency Medicine Triage Physician AI using the"
-      " Emergency Severity Index (ESI).\n\n"
-      "ESI Algorithmic Benchmarks (Score 1.0 to 5.0):\n"
+      " Emergency Severity Index (ESI).\n"
+      "Accurately score and triage the presentation based on clinical acuity"
+      " and physiological risk.\n\n"
+      "ESI Benchmarks:\n"
       "- ESI 1 (4.8 - 5.0): Resuscitation / Immediate Life Threat (cardiac/resp"
-      " arrest, unresponsive, massive uncontrolled bleeding, severe trauma).\n"
+      " arrest, unresponsive, massive hemorrhage, polytrauma).\n"
       "- ESI 2 (4.0 - 4.7): Emergent / High-Risk (pediatric malaria / severe"
       " fever in infants, acute eye bleeding / ocular trauma, acute coronary"
-      " syndrome, stroke, testicular torsion, deep arterial/venous"
-      " lacerations).\n"
-      "- ESI 3 (2.8 - 3.9): Urgent / Multiple resources (active moderate"
-      " bleeding, closed fractures, crush trauma, kidney stones, acute"
-      " abdominal pain).\n"
-      "- ESI 4 (1.8 - 2.7): Less Urgent (simple joint sprains, low-speed bike"
-      " spill, mild UTI, uncomplicated cuts).\n"
-      "- ESI 5 (1.0 - 1.7): Non-urgent (minor superficial scratch, suture"
-      " removal, cold refill).\n\n"
-      "Respond ONLY with a valid JSON object:\n"
+      " syndrome, stroke, testicular torsion, severe respiratory distress).\n"
+      "- ESI 3 (2.8 - 3.9): Urgent (active moderate bleeding, fractures,"
+      " blunt crush injuries, abdominal pain, systemic infection).\n"
+      "- ESI 4 (1.8 - 2.7): Less Urgent (mild sprains, low-speed bike spill,"
+      " uncomplicated cuts, mild colds/bronchitis).\n"
+      "- ESI 5 (1.0 - 1.7): Non-urgent (minor scratches, suture removal,"
+      " prescription refill).\n\n"
+      "Return ONLY a JSON object:\n"
       "{\n"
       '  "suspected_condition": "Specific clinical diagnostic impression",\n'
       '  "severity_score": float between 1.0 and 5.0,\n'
@@ -324,9 +358,8 @@ def get_triage(description: str, age: int, sex: str, comorbidities: str):
       last_err = str(e)
       continue
 
-  # Run safety net if all API calls failed and record the API error
   res = _fallback_rule_triage(description, age, comorbidities)
-  res["source"] = f"Safety Engine (API Exception: {last_err[:80]})"
+  res["source"] = f"Safety Engine (API Error: {last_err[:80]})"
   return res
 
 
@@ -447,7 +480,7 @@ with col_right:
         "Analyzing clinical presentation & ranking optimal facilities..."
     ):
       triage = get_triage(desc, int(age), sex, comorbidities)
-      severity = float(triage.get("severity_score", 3.0))
+      severity = float(triage.get("severity_score", 3.2))
 
       if severity >= 4.5:
         badge_color, badge_text = (
