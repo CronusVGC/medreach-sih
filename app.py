@@ -16,7 +16,8 @@ import xgboost as xgb
 st.set_page_config(
     page_title="MedReach AI - Clinical Triage & Ranker",
     page_icon="🚑",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
 load_dotenv()
@@ -37,16 +38,9 @@ def load_ml_assets():
 
 ds, model, features = load_ml_assets()
 
-with st.sidebar:
-    st.header("⚙️ Configuration")
-    sidebar_key = st.text_input("Groq API Key (Optional Override)", type="password", help="Leave blank to use Streamlit Secrets")
-    st.caption("Status: Comorbidity & Synergistic Triage Engine Active")
-
 def get_groq_client():
     api_key = None
-    if sidebar_key and sidebar_key.strip():
-        api_key = sidebar_key.strip()
-    elif "GROQ_API_KEY" in st.secrets and st.secrets["GROQ_API_KEY"].strip():
+    if "GROQ_API_KEY" in st.secrets and st.secrets["GROQ_API_KEY"].strip():
         api_key = st.secrets["GROQ_API_KEY"].strip()
     elif os.getenv("GROQ_API_KEY") and os.getenv("GROQ_API_KEY").strip():
         api_key = os.getenv("GROQ_API_KEY").strip()
@@ -80,9 +74,6 @@ def normalize_spelling(text: str) -> str:
     return " " + " ".join(corrected) + " " + text.lower()
 
 def apply_comorbidity_uplift(base_score: float, description: str, comorbidities: str) -> tuple[float, str]:
-    """
-    Evaluates high-risk clinical cross-interactions between pre-existing conditions and chief complaints.
-    """
     if not comorbidities or comorbidities.lower() in ["none", "nil", "n/a", "no", ""]:
         return base_score, ""
 
@@ -91,40 +82,40 @@ def apply_comorbidity_uplift(base_score: float, description: str, comorbidities:
     uplift = 0.0
     reason = ""
 
-    # 1. Diabetes + Foot / Extremity Symptoms (Diabetic Ulcer / Gangrene / Cellulitis)
+    # Diabetes + Foot / Extremity Symptoms
     if any(k in c for k in ["diabet", "pvd", "pad"]) and any(k in t for k in ["foot", "feet", "toe", "swollen", "swelling", "ulcer", "blister", "wound", "numb"]):
         uplift = max(uplift, 0.85)
         reason = "Diabetic Limb & Microvascular Threat"
 
-    # 2. Immunosuppressed / Chemo / Cancer + Any Infection / Fever (Neutropenic Sepsis)
+    # Immunosuppressed / Chemo / Cancer + Infection
     if any(k in c for k in ["cancer", "chemo", "immun", "transplant", "hiv", "leukemia", "steroid"]) and any(k in t for k in ["fever", "temp", "chill", "cold", "cough", "sore throat", "shiver"]):
         uplift = max(uplift, 1.40)
         reason = "Immunocompromised / Neutropenic Sepsis Risk"
 
-    # 3. Blood Thinners (Warfarin / Heparin / Eliquis / Aspirin) + Minor Trauma / Fall / Headache / Bleeding
+    # Blood Thinners + Fall / Trauma / Bleeding
     if any(k in c for k in ["thinner", "anticoagula", "warfarin", "eliquis", "xarelto", "clopidogrel", "aspirin"]) and any(k in t for k in ["head", "fall", "fell", "bleed", "bruis", "hit", "bump", "headache"]):
         uplift = max(uplift, 1.25)
         reason = "Anticoagulant Intracranial / Internal Hemorrhage Risk"
 
-    # 4. Asthma / COPD + Respiratory Complaints
+    # Asthma / COPD + Respiratory Complaints
     if any(k in c for k in ["asthma", "copd", "emphysema", "bronchitis"]) and any(k in t for k in ["cough", "breath", "wheez", "chest tight", "cold", "phlegm"]):
         uplift = max(uplift, 1.10)
         reason = "Acute Obstructive Pulmonary Exacerbation"
 
-    # 5. Hypertension / Heart Disease + Non-Specific Upper Body / Neurological Symptoms
+    # Hypertension / Heart Disease + Non-Specific Upper Body / Neurological
     if any(k in c for k in ["hypertens", "high bp", "cad", "cardiac", "heart", "stent", "bypass"]) and any(k in t for k in ["dizzy", "headache", "neck", "jaw", "shoulder", "sweat", "nausea", "indigestion"]):
         uplift = max(uplift, 1.05)
-        reason = "Atypical Cardiovascular Ischemia / Hypertensive Crisis Risk"
+        reason = "Atypical Cardiovascular Ischemia Risk"
 
-    # 6. CKD / Dialysis + Fatigue / Weakness / Swelling / Palpitations
+    # CKD / Dialysis + Fatigue / Swelling / Palpitations
     if any(k in c for k in ["dialysis", "ckd", "kidney", "renal"]) and any(k in t for k in ["weak", "tired", "swollen", "edema", "palpitat", "flutter", "cramp", "missed"]):
         uplift = max(uplift, 1.20)
         reason = "Acute Renal Uremia / Hyperkalemic Arrhythmia Risk"
 
-    # 7. Cirrhosis / Liver Disease + Lethargy / Confusion / Abdominal Distension
+    # Cirrhosis / Liver Disease + Lethargy / Confusion
     if any(k in c for k in ["cirrhosis", "liver", "hepatic", "hepatitis"]) and any(k in t for k in ["confus", "sleepy", "yellow", "jaundice", "stomach", "distend", "swollen"]):
         uplift = max(uplift, 1.15)
-        reason = "Acute Hepatic Decompensation / Encephalopathy Risk"
+        reason = "Acute Hepatic Decompensation Risk"
 
     new_score = float(np.clip(round(base_score + uplift, 2), 1.0, 5.0))
     return new_score, reason
@@ -374,12 +365,6 @@ st.markdown("""
         border-color: #38bdf8 !important;
     }
 
-    /* Sidebar background */
-    [data-testid="stSidebar"] {
-        background-color: #080c14 !important;
-        border-right: 1px solid #1e293b !important;
-    }
-
     /* Custom Triage Card */
     .badge-card {
         background: #0b0f19;
@@ -491,7 +476,7 @@ with col_right:
             ranked_display['Distance (km)'] = ranked_display['Distance (km)'].round(2)
             ranked_display['Model Score'] = ranked_display['Model Score'].round(4)
             ranked_display['Hospital?'] = ranked_display['Hospital?'].map({1: 'Yes', 0: 'No'})
-            ranked_display['ER?'] = ranked_display['ER?' ].map({1: 'Yes', 0: 'No'})
+            ranked_display['ER?'] = ranked_display['ER?'].map({1: 'Yes', 0: 'No'})
             ranked_display['Surgery?'] = ranked_display['Surgery?'].map({1: 'Yes', 0: 'No'})
 
             st.subheader("Ranked Healthcare Facilities")
