@@ -40,7 +40,7 @@ ds, model, features = load_ml_assets()
 with st.sidebar:
     st.header("⚙️ Configuration")
     sidebar_key = st.text_input("Groq API Key (Optional Override)", type="password", help="Leave blank to use Streamlit Secrets")
-    st.caption("Status: Active (Typo & Fuzzy Engine Enabled)")
+    st.caption("Status: Comorbidity & Synergistic Triage Engine Active")
 
 def get_groq_client():
     api_key = None
@@ -59,7 +59,7 @@ def get_groq_client():
         return None
 
 # ---------------------------------------------------------
-# 2. FUZZY SPELLING NORMALIZATION & VULNERABILITY SCALING
+# 2. FUZZY MATCHING, COMORBIDITY SYNERGY & SCALING
 # ---------------------------------------------------------
 CANONICAL_KEYWORDS = [
     "hemorrhage", "bleeding", "blood", "unconscious", "breathing",
@@ -67,18 +67,67 @@ CANONICAL_KEYWORDS = [
     "broken", "pregnant", "pregnancy", "labor", "childbirth", "delivery",
     "chest", "stroke", "paralysis", "spinal", "spine", "choking",
     "anaphylaxis", "snakebite", "malaria", "poison", "fever", "overdose",
-    "seizure", "dying", "head", "injury", "checkup", "antenatal"
+    "seizure", "dying", "head", "injury", "checkup", "antenatal",
+    "swollen", "swelling", "edema", "ulcer", "vomit", "dizzy", "headache"
 ]
 
 def normalize_spelling(text: str) -> str:
-    """Fuzzy-matches words against canonical medical keywords to auto-correct typos."""
     tokens = re.findall(r'\b\w+\b', text.lower())
     corrected = []
     for token in tokens:
-        # Check direct matches or find nearest close match (similarity >= 0.72)
         matches = difflib.get_close_matches(token, CANONICAL_KEYWORDS, n=1, cutoff=0.72)
         corrected.append(matches[0] if matches else token)
     return " " + " ".join(corrected) + " " + text.lower()
+
+def apply_comorbidity_uplift(base_score: float, description: str, comorbidities: str) -> tuple[float, str]:
+    """
+    Evaluates high-risk clinical cross-interactions between pre-existing conditions and chief complaints.
+    """
+    if not comorbidities or comorbidities.lower() in ["none", "nil", "n/a", "no", ""]:
+        return base_score, ""
+
+    t = description.lower()
+    c = comorbidities.lower()
+    uplift = 0.0
+    reason = ""
+
+    # 1. Diabetes + Foot / Extremity Symptoms (Diabetic Ulcer / Gangrene / Cellulitis)
+    if any(k in c for k in ["diabet", "pvd", "pad"]) and any(k in t for k in ["foot", "feet", "toe", "swollen", "swelling", "ulcer", "blister", "wound", "numb"]):
+        uplift = max(uplift, 0.85)
+        reason = "Diabetic Limb & Microvascular Threat"
+
+    # 2. Immunosuppressed / Chemo / Cancer + Any Infection / Fever (Neutropenic Sepsis)
+    if any(k in c for k in ["cancer", "chemo", "immun", "transplant", "hiv", "leukemia", "steroid"]) and any(k in t for k in ["fever", "temp", "chill", "cold", "cough", "sore throat", "shiver"]):
+        uplift = max(uplift, 1.40)
+        reason = "Immunocompromised / Neutropenic Sepsis Risk"
+
+    # 3. Blood Thinners (Warfarin / Heparin / Eliquis / Aspirin) + Minor Trauma / Fall / Headache / Bleeding
+    if any(k in c for k in ["thinner", "anticoagula", "warfarin", "eliquis", "xarelto", "clopidogrel", "aspirin"]) and any(k in t for k in ["head", "fall", "fell", "bleed", "bruis", "hit", "bump", "headache"]):
+        uplift = max(uplift, 1.25)
+        reason = "Anticoagulant Intracranial / Internal Hemorrhage Risk"
+
+    # 4. Asthma / COPD + Respiratory Complaints
+    if any(k in c for k in ["asthma", "copd", "emphysema", "bronchitis"]) and any(k in t for k in ["cough", "breath", "wheez", "chest tight", "cold", "phlegm"]):
+        uplift = max(uplift, 1.10)
+        reason = "Acute Obstructive Pulmonary Exacerbation"
+
+    # 5. Hypertension / Heart Disease + Non-Specific Upper Body / Neurological Symptoms
+    if any(k in c for k in ["hypertens", "high bp", "cad", "cardiac", "heart", "stent", "bypass"]) and any(k in t for k in ["dizzy", "headache", "neck", "jaw", "shoulder", "sweat", "nausea", "indigestion"]):
+        uplift = max(uplift, 1.05)
+        reason = "Atypical Cardiovascular Ischemia / Hypertensive Crisis Risk"
+
+    # 6. CKD / Dialysis + Fatigue / Weakness / Swelling / Palpitations
+    if any(k in c for k in ["dialysis", "ckd", "kidney", "renal"]) and any(k in t for k in ["weak", "tired", "swollen", "edema", "palpitat", "flutter", "cramp", "missed"]):
+        uplift = max(uplift, 1.20)
+        reason = "Acute Renal Uremia / Hyperkalemic Arrhythmia Risk"
+
+    # 7. Cirrhosis / Liver Disease + Lethargy / Confusion / Abdominal Distension
+    if any(k in c for k in ["cirrhosis", "liver", "hepatic", "hepatitis"]) and any(k in t for k in ["confus", "sleepy", "yellow", "jaundice", "stomach", "distend", "swollen"]):
+        uplift = max(uplift, 1.15)
+        reason = "Acute Hepatic Decompensation / Encephalopathy Risk"
+
+    new_score = float(np.clip(round(base_score + uplift, 2), 1.0, 5.0))
+    return new_score, reason
 
 def apply_age_vulnerability_scaling(base_score: float, age: int) -> float:
     if base_score <= 1.8:
@@ -212,22 +261,29 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
             "severity_score": 4.2
         }
 
-    # 12. CLOSED FRACTURES / EXTREMITY BLUNT TRAUMA (ESI 3)
-    if any(k in t for k in ["broken", "fracture", "crush", "dropped", "foot", "heavy", "leg", "arm", "hand", "finger", "abdominal", "stomach"]):
+    # 12. HIGH-RISK DIABETIC EXTREMITY / SWELLING
+    if any(k in c for k in ["diabet", "pvd", "pad"]) and any(k in t for k in ["foot", "feet", "toe", "swollen", "swelling", "ulcer", "wound"]):
+        return {
+            "suspected_condition": "Acute Diabetic Foot Ulceration / Deep Soft-Tissue Infection",
+            "severity_score": 4.1
+        }
+
+    # 13. CLOSED FRACTURES / EXTREMITY BLUNT TRAUMA (ESI 3)
+    if any(k in t for k in ["broken", "fracture", "crush", "dropped", "foot", "heavy", "leg", "arm", "hand", "finger", "abdominal", "stomach", "swollen", "swelling"]):
         base = 3.6 if (age_val >= 60 or "diabetes" in c or "hypertension" in c) else 3.3
         return {
-            "suspected_condition": "Acute Closed Extremity Fracture / Blunt Trauma",
+            "suspected_condition": "Acute Closed Extremity Injury / Peripheral Edema",
             "severity_score": base
         }
 
-    # 13. ROUTINE / OUTPATIENT (ESI 4)
+    # 14. ROUTINE / OUTPATIENT (ESI 4)
     if any(k in t for k in ["cough", "mild fever", "sprain", "sore throat", "cold", "ear ache", "cycle", "bike", "fell"]):
         return {
             "suspected_condition": "Low-Velocity Mechanical Injury / Routine Outpatient",
             "severity_score": 2.2
         }
 
-    # 14. NON-URGENT (ESI 5)
+    # 15. NON-URGENT (ESI 5)
     if any(k in t for k in ["papercut", "scratch", "suture removal", "refill", "minor rash"]):
         return {
             "suspected_condition": "Minor Non-Urgent Presentation",
@@ -248,11 +304,16 @@ def get_triage(description: str, age: int, sex: str, comorbidities: str):
 
     system_prompt = (
         "You are an expert Emergency Medicine Triage Physician AI utilizing the Emergency Severity Index (ESI) protocol.\n"
-        "ROBUST PARSING DIRECTIVE: Users may write with severe typos, phonetic spellings, or abbreviations (e.g. 'hemorage' = hemorrhage, 'hart atac' = heart attack, 'sezuire' = seizure, 'unconcious' = unconscious, 'preganant' = pregnant). Always interpret the true clinical meaning.\n\n"
+        "ROBUST PARSING DIRECTIVE: Resolve colloquial terms, phonetic spellings, and severe typos to their true clinical concepts.\n\n"
+        "CRITICAL COMORBIDITY SYNERGY RULES:\n"
+        "- Swollen feet/toes in a Diabetic patient MUST be triaged as high-risk diabetic foot cellulitis/ischemia (Score 4.0 - 4.2).\n"
+        "- Mild fever/cold in Cancer/Chemotherapy/Immunocompromised patients MUST be triaged as potential Neutropenic Sepsis (Score 4.6 - 4.8).\n"
+        "- Falls or minor head trauma in Anticoagulated/Blood Thinner patients MUST be triaged as high-risk intracranial hemorrhage (Score 4.4 - 4.6).\n"
+        "- Mild respiratory complaints in COPD/Asthma patients MUST be scored as acute bronchospasm/respiratory compromise (Score 4.3 - 4.5).\n\n"
         "ESI CLINICAL BENCHMARKS:\n"
         "- ESI 1 (Score 4.8 - 5.0): Resuscitation / Immediate Life Threat (hemorrhage/severe bleeding, dying, cardiac/respiratory arrest, amputations, active obstetric hemorrhage with shock).\n"
-        "- ESI 2 (Score 4.0 - 4.7): Emergent / High Risk (childbirth / active labor / delivery, spinal trauma, stroke, chest pain, compound fractures, acute ocular trauma, active hemorrhage).\n"
-        "- ESI 3 (Score 2.8 - 3.9): Urgent (closed fractures, blunt crush trauma, severe abdominal pain).\n"
+        "- ESI 2 (Score 4.0 - 4.7): Emergent / High Risk (childbirth / active labor / delivery, spinal trauma, stroke, chest pain, compound fractures, diabetic foot ischemia, neutropenic fever, acute ocular trauma).\n"
+        "- ESI 3 (Score 2.8 - 3.9): Urgent (uncomplicated swollen feet without diabetes, closed fractures, blunt crush trauma, severe abdominal pain).\n"
         "- ESI 4 (Score 1.8 - 2.7): Less Urgent (simple sprains, mild fever/colds, uncomplicated wounds).\n"
         "- ESI 5 (Score 1.0 - 1.7): Non-Urgent / Routine Outpatient (routine antenatal checkup / pregnancy consultation without acute symptoms, minor scratches, suture removal, prescription refills).\n\n"
         "Return ONLY a JSON object:\n"
@@ -261,7 +322,7 @@ def get_triage(description: str, age: int, sex: str, comorbidities: str):
         '  "severity_score": float between 1.0 and 5.0\n'
         "}"
     )
-    user_prompt = f"Patient Profile: {age} years old, {sex}, History: {comorbidities}\nIncident / Symptoms Reported: \"{description}\""
+    user_prompt = f"Patient Profile: {age} years old, {sex}, Pre-existing Conditions / Medical History: {comorbidities}\nChief Complaint / Scenario Reported: \"{description}\""
 
     active_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
 
@@ -331,7 +392,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🚑 MedReach AI — Clinical Triage & Facility Ranker")
-st.caption("Pairwise Learning-to-Rank (XGBoost) with LLaMA 3.3/3.1 Clinical Triage & Age-Vulnerability Scaling")
+st.caption("Pairwise Learning-to-Rank (XGBoost) with LLaMA 3.3/3.1 Clinical Triage & Comorbidity Synergy Scaling")
 
 col_left, col_right = st.columns([4, 6], gap="large")
 
@@ -340,28 +401,28 @@ with col_left:
     
     preset = st.selectbox("Load Test Scenario", [
         "Custom",
+        "Diabetic Foot Ulcer / Swelling",
+        "Neutropenic Fever (Chemotherapy)",
+        "Blood Thinner Minor Fall (Warfarin)",
         "Active Childbirth / Delivery (28yo)",
         "Routine Antenatal Checkup (2 wks)",
         "Traumatic Amputation (Hand)",
-        "Pediatric High Fever (2yo)",
-        "Acute Eye Bleeding",
-        "Geriatric Fall & Hip Pain (78yo)",
-        "High-Speed Collision"
+        "Geriatric Fall & Hip Pain (78yo)"
     ])
-    if preset == "Active Childbirth / Delivery (28yo)":
+    if preset == "Diabetic Foot Ulcer / Swelling":
+        default_desc, default_age, default_sex, default_meds = "Swollen painful feet and open redness on right big toe", 56, "Male", "Type 2 Diabetes, Peripheral Neuropathy"
+    elif preset == "Neutropenic Fever (Chemotherapy)":
+        default_desc, default_age, default_sex, default_meds = "Mild shivering, low-grade fever of 38.1C, slight throat irritation", 48, "Female", "Stage III Breast Cancer, Active Chemotherapy"
+    elif preset == "Blood Thinner Minor Fall (Warfarin)":
+        default_desc, default_age, default_sex, default_meds = "Bumped head lightly on kitchen cabinet, mild persistent headache", 68, "Male", "Atrial Fibrillation, On Warfarin"
+    elif preset == "Active Childbirth / Delivery (28yo)":
         default_desc, default_age, default_sex, default_meds = "Active labor and childbirth, contractions 2 minutes apart, water broke", 28, "Female", "None"
     elif preset == "Routine Antenatal Checkup (2 wks)":
         default_desc, default_age, default_sex, default_meds = "Routine 2-week early pregnancy checkup, general wellness consultation, no acute symptoms", 27, "Female", "None"
     elif preset == "Traumatic Amputation (Hand)":
         default_desc, default_age, default_sex, default_meds = "Complete traumatic amputation of right hand in industrial machinery with active arterial hemorrhage", 34, "Male", "None"
-    elif preset == "Pediatric High Fever (2yo)":
-        default_desc, default_age, default_sex, default_meds = "2 year old child with persistent high temperature, chills, vomiting, and lethargy", 2, "Female", "None"
-    elif preset == "Acute Eye Bleeding":
-        default_desc, default_age, default_sex, default_meds = "Sustained direct trauma to left eye with active bleeding, severe pain, and partial vision loss", 29, "Male", "None"
     elif preset == "Geriatric Fall & Hip Pain (78yo)":
         default_desc, default_age, default_sex, default_meds = "Ground-level mechanical fall, acute groin deformity, severe hip pain and inability to bear weight", 78, "Female", "Osteoporosis, Hypertension"
-    elif preset == "High-Speed Collision":
-        default_desc, default_age, default_sex, default_meds = "Pedestrian struck by vehicle at high speed, unresponsive with open lower extremity trauma", 32, "Male", "None"
     else:
         default_desc, default_age, default_sex, default_meds = "", 28, "Female", "None"
 
@@ -386,11 +447,15 @@ with col_left:
 
 with col_right:
     if run_btn and desc.strip():
-        with st.spinner("Analyzing presentation & ranking optimal facilities..."):
+        with st.spinner("Analyzing presentation & evaluating comorbidity risk..."):
             triage = get_triage(desc, int(age), sex, comorbidities)
             raw_severity = float(triage.get("severity_score", 3.3))
 
-            severity = apply_age_vulnerability_scaling(raw_severity, int(age))
+            # 1. Apply Clinical Comorbidity Interaction Scaling
+            comorbid_severity, _ = apply_comorbidity_uplift(raw_severity, desc, comorbidities)
+
+            # 2. Apply Age Vulnerability Scaling
+            severity = apply_age_vulnerability_scaling(comorbid_severity, int(age))
 
             if severity >= 4.5:
                 badge_color, badge_text = "#ef4444", "LEVEL 1: RESUSCITATION / CRITICAL"
@@ -426,7 +491,7 @@ with col_right:
             ranked_display['Distance (km)'] = ranked_display['Distance (km)'].round(2)
             ranked_display['Model Score'] = ranked_display['Model Score'].round(4)
             ranked_display['Hospital?'] = ranked_display['Hospital?'].map({1: 'Yes', 0: 'No'})
-            ranked_display['ER?'] = ranked_display['ER?'].map({1: 'Yes', 0: 'No'})
+            ranked_display['ER?'] = ranked_display['ER?' ].map({1: 'Yes', 0: 'No'})
             ranked_display['Surgery?'] = ranked_display['Surgery?'].map({1: 'Yes', 0: 'No'})
 
             st.subheader("Ranked Healthcare Facilities")
