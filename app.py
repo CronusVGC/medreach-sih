@@ -52,7 +52,7 @@ with st.sidebar:
       type="password",
       help="Leave blank to use Streamlit Secrets",
   )
-  st.caption("Status: XGBoost Ranker Loaded")
+  st.caption("Status: XGBoost Ranker Active")
 
 
 def get_groq_client():
@@ -93,34 +93,36 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
   c = comorbidities.lower()
   age_val = int(age)
 
-  # Pediatric High-Risk Infections / Malaria / High Fever
-  if (
-      any(
-          k in t
-          for k in [
-              "malaria",
-              "dengue",
-              "sepsis",
-              "convulsion",
-              "fits",
-              "typhoid",
-          ]
-      )
-      or (age_val <= 5 and any(k in t for k in ["fever", "lethargic", "vomit"]))
+  # 1. TRAUMATIC AMPUTATION / SEVERED EXTREMITIES / DEGLOVING (ESI 1 / 2)
+  if any(
+      k in t
+      for k in [
+          "chop",
+          "chopped",
+          "severed",
+          "amputat",
+          "cut off",
+          "mangled",
+          "deglov",
+          "torn off",
+          "sawn off",
+          "detached",
+      ]
   ):
     return {
         "suspected_condition": (
-            "Pediatric Acute Febrile Illness / Suspected Severe Infection"
+            "Traumatic Amputation / Acute Vascular Limb Devastation (ESI-1)"
         ),
-        "severity_score": 4.4,
+        "severity_score": 4.9,
         "medical_terms": [
-            "Severe pediatric febrile syndrome",
-            "Urgent clinical stabilization required",
+            "Traumatic extremity amputation",
+            "Arterial hemorrhage / Ischemia",
+            "Immediate vascular surgical intervention",
         ],
-        "source": "Clinical Safety Engine",
+        "source": "Clinical Safety Engine (Critical Trauma)",
     }
 
-  # ESI 1: Immediate Resuscitation / Arrest / Massive Trauma
+  # 2. IMMEDIATE RESUSCITATION / ARREST / MASSIVE HEMORRHAGE (ESI 1)
   if any(
       k in t
       for k in [
@@ -135,51 +137,116 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
           "blood everywhere",
           "gunshot",
           "stab",
+          "impaled",
           "crash",
           "high speed",
           "collision",
           "hemorrhage",
+          "drowning",
+          "electrocution",
+          "cyanosis",
+          "blue lips",
       ]
   ):
     return {
         "suspected_condition": (
-            "Cardiorespiratory Arrest / Major Critical Trauma"
+            "Cardiorespiratory Arrest / Major Critical Trauma (ESI-1)"
         ),
         "severity_score": 5.0,
         "medical_terms": [
-            "Apparent clinical arrest / Massive trauma",
+            "Apparent clinical arrest / Severe trauma",
             "Immediate advanced life support required",
         ],
-        "source": "Clinical Safety Engine",
+        "source": "Clinical Safety Engine (Resuscitation)",
     }
 
-  # Ocular Trauma / Bleeding Eyes
-  if any(k in t for k in ["eye", "ocular", "vision", "blind", "cornea"]) and any(
-      k in t for k in ["bleed", "blood", "cut", "penetrat", "trauma", "pain"]
+  # 3. AIRWAY / ANAPHYLAXIS / TOXIC INHALATION (ESI 1)
+  if any(
+      k in t
+      for k in [
+          "choking",
+          "can't breathe",
+          "cannot breathe",
+          "throat closed",
+          "swollen tongue",
+          "stridor",
+          "anaphylaxis",
+          "smoke inhalation",
+      ]
   ):
     return {
-        "suspected_condition": "Acute Ocular Trauma / Intraocular Hemorrhage",
-        "severity_score": 4.2,
+        "suspected_condition": (
+            "Acute Airway Compromise / Severe Anaphylaxis (ESI-1)"
+        ),
+        "severity_score": 4.9,
         "medical_terms": [
-            "Traumatic hyphema / Ocular injury",
-            "Urgent ophthalmologic surgical evaluation",
+            "Upper airway obstruction",
+            "Severe anaphylactic reaction",
+            "Immediate intubation readiness",
         ],
-        "source": "Clinical Safety Engine",
+        "source": "Clinical Safety Engine (Airway Emergency)",
     }
 
-  # General Bleeding / Lacerations
-  if any(k in t for k in ["bleed", "bleeding", "blood"]):
+  # 4. OCULAR TRAUMA / PENETRATION / CHEMICAL BURN (ESI 2)
+  if any(k in t for k in ["eye", "ocular", "vision", "blind", "cornea"]) and any(
+      k in t
+      for k in [
+          "bleed",
+          "blood",
+          "cut",
+          "penetrat",
+          "acid",
+          "chemical",
+          "trauma",
+          "pain",
+      ]
+  ):
     return {
-        "suspected_condition": "Active External Hemorrhage / Acute Laceration",
-        "severity_score": 3.8,
+        "suspected_condition": (
+            "Acute Ocular Trauma / Globe Rupture / Intraocular Hemorrhage"
+        ),
+        "severity_score": 4.3,
         "medical_terms": [
-            "Active hemorrhage",
-            "Wound exploration and hemostasis",
+            "Open globe / Ocular hemorrhage",
+            "Urgent ophthalmologic surgical assessment",
         ],
-        "source": "Clinical Safety Engine",
+        "source": "Clinical Safety Engine (Ocular Urgent)",
     }
 
-  # ESI 2: High Risk / Cranial / Cardiac
+  # 5. HIGH-RISK TOXICOLOGY / ENVENOMATION / SEVERE PEDIATRIC FEVER (ESI 2)
+  if (
+      any(
+          k in t
+          for k in [
+              "snake",
+              "snakebite",
+              "cobra",
+              "viper",
+              "poison",
+              "overdose",
+              "acid burn",
+              "malaria",
+              "dengue",
+              "sepsis",
+              "convulsion",
+              "fits",
+          ]
+      )
+      or (age_val <= 5 and any(k in t for k in ["fever", "lethargic", "vomit"]))
+  ):
+    return {
+        "suspected_condition": (
+            "Acute Envenomation / Toxic Ingestion / Severe Pediatric Infection"
+        ),
+        "severity_score": 4.5,
+        "medical_terms": [
+            "Acute toxic exposure / Severe infection",
+            "Urgent antidote / Critical stabilization",
+        ],
+        "source": "Clinical Safety Engine (Toxicology/Infection)",
+    }
+
+  # 6. CRANIAL / NEUROLOGICAL / ACUTE CHEST (ESI 2)
   if any(
       k in t
       for k in [
@@ -195,16 +262,28 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
       ]
   ):
     return {
-        "suspected_condition": "Acute Cranial / Emergent Medical Event",
+        "suspected_condition": "Acute Cranial / Emergent Cardiopulmonary Event",
         "severity_score": 4.3,
         "medical_terms": [
-            "Closed head injury",
-            "Emergency neurological/cardiac evaluation",
+            "Closed head injury / Ischemia evaluation",
+            "Emergency cardiac/neuro assessment",
         ],
-        "source": "Clinical Safety Engine",
+        "source": "Clinical Safety Engine (High Risk)",
     }
 
-  # ESI 3: Urgent / Blunt / Fracture
+  # 7. ACTIVE MODERATE BLEEDING / DEEP LACERATIONS (ESI 3)
+  if any(k in t for k in ["bleed", "bleeding", "blood"]):
+    return {
+        "suspected_condition": "Active External Hemorrhage / Acute Laceration",
+        "severity_score": 3.8,
+        "medical_terms": [
+            "Active hemorrhage",
+            "Wound exploration and hemostasis",
+        ],
+        "source": "Clinical Safety Engine (Urgent Bleed)",
+    }
+
+  # 8. CLOSED FRACTURES / BLUNT EXTREMITY TRAUMA (ESI 3)
   if any(
       k in t
       for k in [
@@ -217,6 +296,8 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
           "heavy",
           "leg",
           "arm",
+          "hand",
+          "finger",
           "abdominal",
           "stomach",
       ]
@@ -227,16 +308,16 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         else 3.2
     )
     return {
-        "suspected_condition": "Acute Blunt Extremity Trauma / Fracture",
+        "suspected_condition": "Acute Blunt Extremity Trauma / Closed Fracture",
         "severity_score": base,
         "medical_terms": [
             "Blunt orthopedic trauma",
             "Diagnostic radiography indicated",
         ],
-        "source": "Clinical Safety Engine",
+        "source": "Clinical Safety Engine (Orthopedic Urgent)",
     }
 
-  # ESI 4: Less Urgent / Outpatient (Explicit Minor Keywords)
+  # 9. MINOR / ROUTINE OUTPATIENT (ESI 4)
   if any(
       k in t
       for k in [
@@ -246,23 +327,24 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
           "sore throat",
           "cold",
           "ear ache",
-          "mild headache",
           "cycle",
           "bike",
           "fell",
       ]
   ):
     return {
-        "suspected_condition": "Low-Velocity Mechanical Injury / Routine Care",
+        "suspected_condition": (
+            "Low-Velocity Mechanical Injury / Routine Outpatient"
+        ),
         "severity_score": 2.2,
         "medical_terms": [
             "Superficial contusion",
-            "Primary outpatient evaluation",
+            "Primary care evaluation",
         ],
-        "source": "Clinical Safety Engine",
+        "source": "Clinical Safety Engine (Outpatient)",
     }
 
-  # ESI 5: Explicitly Minor Complaints
+  # 10. NON-URGENT (ESI 5)
   if any(
       k in t
       for k in [
@@ -270,18 +352,17 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
           "scratch",
           "suture removal",
           "refill",
-          "rash",
-          "minor scratch",
+          "minor rash",
       ]
   ):
     return {
         "suspected_condition": "Minor Non-Urgent Presentation",
         "severity_score": 1.4,
         "medical_terms": ["Superficial minor complaint"],
-        "source": "Clinical Safety Engine",
+        "source": "Clinical Safety Engine (Non-Urgent)",
     }
 
-  # CLINICAL SAFE DEFAULT: Assume ESI 3 (Urgent / Undifferentiated) rather than superficial
+  # DEFAULT SAFE BASELINE (ESI 3)
   return {
       "suspected_condition": (
           "Undifferentiated Acute Presentation / Diagnostic Workup Indicated"
@@ -291,10 +372,11 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
           "Unspecified clinical presentation",
           "Comprehensive diagnostic triage recommended",
       ],
-      "source": "Clinical Safety Engine (Default Urgent Baseline)",
+      "source": "Clinical Safety Engine (Default Urgent)",
   }
 
 
+@functools.lru_cache(maxsize=128)
 def get_triage(description: str, age: int, sex: str, comorbidities: str):
   client, error_msg = get_groq_client()
 
@@ -304,27 +386,31 @@ def get_triage(description: str, age: int, sex: str, comorbidities: str):
     return res
 
   system_prompt = (
-      "You are an expert Emergency Medicine Triage Physician AI using the"
-      " Emergency Severity Index (ESI).\n"
-      "Accurately score and triage the presentation based on clinical acuity"
-      " and physiological risk.\n\n"
-      "ESI Benchmarks:\n"
-      "- ESI 1 (4.8 - 5.0): Resuscitation / Immediate Life Threat (cardiac/resp"
-      " arrest, unresponsive, massive hemorrhage, polytrauma).\n"
-      "- ESI 2 (4.0 - 4.7): Emergent / High-Risk (pediatric malaria / severe"
-      " fever in infants, acute eye bleeding / ocular trauma, acute coronary"
-      " syndrome, stroke, testicular torsion, severe respiratory distress).\n"
-      "- ESI 3 (2.8 - 3.9): Urgent (active moderate bleeding, fractures,"
-      " blunt crush injuries, abdominal pain, systemic infection).\n"
-      "- ESI 4 (1.8 - 2.7): Less Urgent (mild sprains, low-speed bike spill,"
-      " uncomplicated cuts, mild colds/bronchitis).\n"
-      "- ESI 5 (1.0 - 1.7): Non-urgent (minor scratches, suture removal,"
-      " prescription refill).\n\n"
-      "Return ONLY a JSON object:\n"
+      "You are an expert Emergency Medicine Triage Physician AI utilizing the"
+      " Emergency Severity Index (ESI) protocol.\n"
+      "Accurately score acute clinical acuity on a 1.0 to 5.0 scale.\n\n"
+      "MANDATORY CLINICAL PROTOCOLS:\n"
+      "- ESI 1 (Score 4.8 - 5.0): Resuscitation / Immediate Life Threat\n"
+      "  * Traumatic amputations (e.g. severed/chopped hands, feet, fingers,"
+      " limbs), mangled extremity, arterial hemorrhage.\n"
+      "  * Cardiorespiratory arrest, unresponsiveness, gunshot/stab wounds to"
+      " torso/neck, airway compromise, severe anaphylaxis.\n"
+      "- ESI 2 (Score 4.0 - 4.7): Emergent / High-Risk Condition\n"
+      "  * Acute snakebite / envenomation, high fever in infants/toddlers,"
+      " ocular trauma / eye bleeding, stroke symptoms, acute coronary"
+      " syndrome.\n"
+      "- ESI 3 (Score 2.8 - 3.9): Urgent / Multiple Diagnostic Resources\n"
+      "  * Closed fractures, blunt crush trauma without complete"
+      " devascularization, severe abdominal pain, kidney stones.\n"
+      "- ESI 4 (Score 1.8 - 2.7): Less Urgent (simple sprains, minor low-speed"
+      " falls, mild infections).\n"
+      "- ESI 5 (Score 1.0 - 1.7): Non-Urgent (superficial abrasions, suture"
+      " removal, medication refills).\n\n"
+      "Return ONLY a valid JSON object:\n"
       "{\n"
       '  "suspected_condition": "Specific clinical diagnostic impression",\n'
       '  "severity_score": float between 1.0 and 5.0,\n'
-      '  "medical_terms": ["2-3 SNOMED-CT clinical terms"]\n'
+      '  "medical_terms": ["2-3 SNOMED-CT clinical concepts"]\n'
       "}"
   )
   user_prompt = (
@@ -391,13 +477,24 @@ with col_left:
       "Load Test Scenario",
       [
           "Custom",
+          "Traumatic Amputation (Hand)",
           "Pediatric Malaria (2yo)",
           "Acute Eye Bleeding",
           "High-Speed Collision",
           "Crush Injury (Foot)",
       ],
   )
-  if preset == "Pediatric Malaria (2yo)":
+  if preset == "Traumatic Amputation (Hand)":
+    default_desc, default_age, default_sex, default_meds = (
+        (
+            "Complete traumatic amputation of right hand in industrial machinery"
+            " with active arterial hemorrhage"
+        ),
+        34,
+        "Male",
+        "None",
+    )
+  elif preset == "Pediatric Malaria (2yo)":
     default_desc, default_age, default_sex, default_meds = (
         (
             "2 year old child with persistent high fever, chills, vomiting, and"
