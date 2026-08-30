@@ -121,307 +121,147 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 # 3. CLINICAL TRIAGE SAFETY RULES & LLM INTEGRATION
 # ---------------------------------------------------------
 def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
-  t = text.lower()
-  c = comorbidities.lower()
-  age_val = int(age)
+    t = text.lower()
+    c = comorbidities.lower()
+    age_val = int(age)
 
-  # Traumatic Amputation / Severed Extremities
-  if any(
-      k in t
-      for k in [
-          "chop",
-          "chopped",
-          "severed",
-          "amputat",
-          "cut off",
-          "mangled",
-          "deglov",
-          "torn off",
-          "sawn off",
-          "detached",
-      ]
-  ):
+    # 1. TRAUMATIC AMPUTATION / SEVERED EXTREMITIES / DEGLOVING (ESI 1 / 2)
+    if any(k in t for k in [
+        "chop", "chopped", "severed", "amputat", "cut off", "mangled", 
+        "deglov", "torn off", "sawn off", "detached"
+    ]):
+        return {
+            "suspected_condition": "Traumatic Amputation / Acute Vascular Limb Devastation (ESI-1)",
+            "severity_score": 4.9
+        }
+
+    # 2. IMMEDIATE RESUSCITATION / ARREST / IMPENDING DEATH / MASSIVE TRAUMA (ESI 1)
+    if any(k in t for k in [
+        "dying", "die", "dead", "deceased", "unresponsive", "not breathing", 
+        "stopped breathing", "cardiac arrest", "massive bleed", "bleeding heavily", 
+        "blood everywhere", "gunshot", "stab", "impaled", "crash", "high speed", 
+        "collision", "hemorrhage", "drowning", "electrocution", "cyanosis", 
+        "blue lips", "passing out", "collapsing"
+    ]):
+        return {
+            "suspected_condition": "Impending Arrest / Cardiorespiratory Resuscitation (ESI-1)",
+            "severity_score": 5.0
+        }
+
+    # 3. AIRWAY / ANAPHYLAXIS / TOXIC INHALATION (ESI 1)
+    if any(k in t for k in [
+        "choking", "can't breathe", "cannot breathe", "throat closed", 
+        "swollen tongue", "stridor", "anaphylaxis", "smoke inhalation"
+    ]):
+        return {
+            "suspected_condition": "Acute Airway Compromise / Severe Anaphylaxis (ESI-1)",
+            "severity_score": 4.9
+        }
+
+    # 4. OCULAR TRAUMA / GLOBE RUPTURE (ESI 2)
+    if any(k in t for k in ["eye", "ocular", "vision", "blind", "cornea"]) and any(
+        k in t for k in ["bleed", "blood", "cut", "penetrat", "acid", "chemical", "trauma", "pain"]
+    ):
+        return {
+            "suspected_condition": "Acute Ocular Trauma / Globe Rupture / Intraocular Hemorrhage",
+            "severity_score": 4.3
+        }
+
+    # 5. HIGH-RISK TOXICOLOGY / INFECTION / PEDIATRIC HIGH FEVER (ESI 2)
+    if any(k in t for k in [
+        "snake", "snakebite", "cobra", "viper", "poison", "overdose", "acid burn",
+        "malaria", "dengue", "sepsis", "convulsion", "fits"
+    ]) or (age_val <= 5 and any(k in t for k in ["fever", "temperature", "high temp", "hot", "lethargic", "vomit"])):
+        return {
+            "suspected_condition": "Pediatric Acute Febrile Syndrome / High-Risk Infection",
+            "severity_score": 4.5
+        }
+
+    # 6. CRANIAL / NEUROLOGICAL / CARDIAC (ESI 2)
+    if any(k in t for k in ["head", "sink", "chest", "heart", "stroke", "paralysis", "slurred", "faint", "seizure"]):
+        return {
+            "suspected_condition": "Acute Cranial / Emergent Cardiopulmonary Event",
+            "severity_score": 4.3
+        }
+
+    # 7. ACTIVE BLEEDING (ESI 3)
+    if any(k in t for k in ["bleed", "bleeding", "blood"]):
+        return {
+            "suspected_condition": "Active External Hemorrhage / Acute Laceration",
+            "severity_score": 3.8
+        }
+
+    # 8. CLOSED FRACTURES / EXTREMITY TRAUMA (ESI 3)
+    if any(k in t for k in ["broken", "fracture", "crush", "dropped", "bone", "foot", "heavy", "leg", "arm", "hand", "finger", "abdominal", "stomach"]):
+        base = 3.6 if (age_val >= 60 or "diabetes" in c or "hypertension" in c) else 3.2
+        return {
+            "suspected_condition": "Acute Blunt Extremity Trauma / Closed Fracture",
+            "severity_score": base
+        }
+
+    # 9. LOW-VELOCITY / OUTPATIENT (ESI 4)
+    if any(k in t for k in ["cough", "mild fever", "sprain", "sore throat", "cold", "ear ache", "cycle", "bike", "fell"]):
+        return {
+            "suspected_condition": "Low-Velocity Mechanical Injury / Routine Outpatient",
+            "severity_score": 2.2
+        }
+
+    # 10. NON-URGENT (ESI 5)
+    if any(k in t for k in ["papercut", "scratch", "suture removal", "refill", "minor rash"]):
+        return {
+            "suspected_condition": "Minor Non-Urgent Presentation",
+            "severity_score": 1.4
+        }
+
     return {
-        "suspected_condition": (
-            "Traumatic Amputation / Acute Vascular Limb Devastation (ESI-1)"
-        ),
-        "severity_score": 4.9,
+        "suspected_condition": "Undifferentiated Acute Presentation / Diagnostic Workup Indicated",
+        "severity_score": 3.2
     }
-
-  # Cardiopulmonary Arrest / Massive Trauma
-  if any(
-      k in t
-      for k in [
-          "dead",
-          "deceased",
-          "unresponsive",
-          "not breathing",
-          "stopped breathing",
-          "cardiac arrest",
-          "massive bleed",
-          "bleeding heavily",
-          "blood everywhere",
-          "gunshot",
-          "stab",
-          "impaled",
-          "crash",
-          "high speed",
-          "collision",
-          "hemorrhage",
-          "drowning",
-          "electrocution",
-          "cyanosis",
-          "blue lips",
-      ]
-  ):
-    return {
-        "suspected_condition": (
-            "Cardiorespiratory Arrest / Major Critical Trauma (ESI-1)"
-        ),
-        "severity_score": 5.0,
-    }
-
-  # Airway Compromise / Anaphylaxis
-  if any(
-      k in t
-      for k in [
-          "choking",
-          "can't breathe",
-          "cannot breathe",
-          "throat closed",
-          "swollen tongue",
-          "stridor",
-          "anaphylaxis",
-          "smoke inhalation",
-      ]
-  ):
-    return {
-        "suspected_condition": (
-            "Acute Airway Compromise / Severe Anaphylaxis (ESI-1)"
-        ),
-        "severity_score": 4.9,
-    }
-
-  # Ocular Trauma / Globe Rupture
-  if any(k in t for k in ["eye", "ocular", "vision", "blind", "cornea"]) and any(
-      k in t
-      for k in [
-          "bleed",
-          "blood",
-          "cut",
-          "penetrat",
-          "acid",
-          "chemical",
-          "trauma",
-          "pain",
-      ]
-  ):
-    return {
-        "suspected_condition": (
-            "Acute Ocular Trauma / Globe Rupture / Intraocular Hemorrhage"
-        ),
-        "severity_score": 4.3,
-    }
-
-  # High-Risk Toxicology / Infection / Pediatric High Fever
-  if (
-      any(
-          k in t
-          for k in [
-              "snake",
-              "snakebite",
-              "cobra",
-              "viper",
-              "poison",
-              "overdose",
-              "acid burn",
-              "malaria",
-              "dengue",
-              "sepsis",
-              "convulsion",
-              "fits",
-          ]
-      )
-      or (
-          age_val <= 5
-          and any(
-              k in t
-              for k in [
-                  "fever",
-                  "temperature",
-                  "high temp",
-                  "hot",
-                  "lethargic",
-                  "vomit",
-              ]
-          )
-      )
-  ):
-    return {
-        "suspected_condition": (
-            "Pediatric Acute Febrile Syndrome / High-Risk Infection"
-        ),
-        "severity_score": 4.5,
-    }
-
-  # Cranial / Neurological / Cardiac
-  if any(
-      k in t
-      for k in [
-          "head",
-          "sink",
-          "chest",
-          "heart",
-          "stroke",
-          "paralysis",
-          "slurred",
-          "faint",
-          "seizure",
-      ]
-  ):
-    return {
-        "suspected_condition": "Acute Cranial / Emergent Cardiopulmonary Event",
-        "severity_score": 4.3,
-    }
-
-  # Active Bleeding
-  if any(k in t for k in ["bleed", "bleeding", "blood"]):
-    return {
-        "suspected_condition": "Active External Hemorrhage / Acute Laceration",
-        "severity_score": 3.8,
-    }
-
-  # Closed Fractures / Extremity Trauma
-  if any(
-      k in t
-      for k in [
-          "broken",
-          "fracture",
-          "crush",
-          "dropped",
-          "bone",
-          "foot",
-          "heavy",
-          "leg",
-          "arm",
-          "hand",
-          "finger",
-          "abdominal",
-          "stomach",
-      ]
-  ):
-    base = (
-        3.6
-        if (age_val >= 60 or "diabetes" in c or "hypertension" in c)
-        else 3.2
-    )
-    return {
-        "suspected_condition": "Acute Blunt Extremity Trauma / Closed Fracture",
-        "severity_score": base,
-    }
-
-  # Low-Velocity / Outpatient
-  if any(
-      k in t
-      for k in [
-          "cough",
-          "mild fever",
-          "sprain",
-          "sore throat",
-          "cold",
-          "ear ache",
-          "cycle",
-          "bike",
-          "fell",
-      ]
-  ):
-    return {
-        "suspected_condition": (
-            "Low-Velocity Mechanical Injury / Routine Outpatient"
-        ),
-        "severity_score": 2.2,
-    }
-
-  # Non-Urgent
-  if any(
-      k in t
-      for k in [
-          "papercut",
-          "scratch",
-          "suture removal",
-          "refill",
-          "minor rash",
-      ]
-  ):
-    return {
-        "suspected_condition": "Minor Non-Urgent Presentation",
-        "severity_score": 1.4,
-    }
-
-  return {
-      "suspected_condition": (
-          "Undifferentiated Acute Presentation / Diagnostic Workup Indicated"
-      ),
-      "severity_score": 3.2,
-  }
 
 
 @functools.lru_cache(maxsize=128)
 def get_triage(description: str, age: int, sex: str, comorbidities: str):
-  client = get_groq_client()
+    client = get_groq_client()
 
-  if not client:
+    if not client:
+        return _fallback_rule_triage(description, age, comorbidities)
+
+    system_prompt = (
+        "You are an expert Emergency Medicine Triage Physician AI utilizing the Emergency Severity Index (ESI) protocol.\n"
+        "Accurately score acute clinical acuity on a 1.0 to 5.0 scale.\n\n"
+        "ESI Protocols:\n"
+        "- ESI 1 (Score 4.8 - 5.0): Immediate Life Threat / Resuscitation (dying, cardiac/respiratory arrest, amputations, massive hemorrhage, unresponsiveness).\n"
+        "- ESI 2 (Score 4.0 - 4.7): Emergent / High-Risk (severe pediatric fever / malaria in toddlers, eye trauma, stroke, acute coronary syndrome).\n"
+        "- ESI 3 (Score 2.8 - 3.9): Urgent (closed fractures, crush injuries, severe abdominal pain).\n"
+        "- ESI 4 (Score 1.8 - 2.7): Less Urgent (mild sprains, low-speed falls, minor infections).\n"
+        "- ESI 5 (Score 1.0 - 1.7): Non-Urgent (minor scratches, suture removal, prescription refills).\n\n"
+        "Return ONLY a JSON object:\n"
+        "{\n"
+        '  "suspected_condition": "Specific clinical diagnostic impression",\n'
+        '  "severity_score": float between 1.0 and 5.0\n'
+        "}"
+    )
+    user_prompt = f"Patient Profile: {age} years old, {sex}, History: {comorbidities}\nIncident / Symptoms Reported: \"{description}\""
+
+    active_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+
+    for model_id in active_models:
+        try:
+            resp = client.chat.completions.create(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.05,
+                max_tokens=150
+            )
+            return json.loads(resp.choices[0].message.content)
+        except Exception:
+            continue
+
     return _fallback_rule_triage(description, age, comorbidities)
-
-  system_prompt = (
-      "You are an expert Emergency Medicine Triage Physician AI utilizing the"
-      " Emergency Severity Index (ESI) protocol.\n"
-      "Accurately score acute clinical acuity on a 1.0 to 5.0 scale.\n\n"
-      "ESI Protocols:\n"
-      "- ESI 1 (Score 4.8 - 5.0): Immediate Life Threat / Resuscitation"
-      " (amputations, cardiac arrest, respiratory arrest, severe"
-      " hemorrhage).\n"
-      "- ESI 2 (Score 4.0 - 4.7): Emergent / High-Risk (severe pediatric fever /"
-      " malaria in toddlers, eye trauma, stroke, acute coronary syndrome).\n"
-      "- ESI 3 (Score 2.8 - 3.9): Urgent (closed fractures, crush injuries,"
-      " severe abdominal pain).\n"
-      "- ESI 4 (Score 1.8 - 2.7): Less Urgent (mild sprains, low-speed falls,"
-      " minor infections).\n"
-      "- ESI 5 (Score 1.0 - 1.7): Non-Urgent (minor scratches, suture removal,"
-      " prescription refills).\n\n"
-      "Return ONLY a JSON object:\n"
-      "{\n"
-      '  "suspected_condition": "Specific clinical diagnostic impression",\n'
-      '  "severity_score": float between 1.0 and 5.0\n'
-      "}"
-  )
-  user_prompt = (
-      f"Patient Profile: {age} years old, {sex}, History: {comorbidities}\n"
-      f'Incident / Symptoms Reported: "{description}"'
-  )
-
-  # Only valid active production models on Groq
-  active_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
-
-  for model_id in active_models:
-    try:
-      resp = client.chat.completions.create(
-          model=model_id,
-          messages=[
-              {"role": "system", "content": system_prompt},
-              {"role": "user", "content": user_prompt},
-          ],
-          response_format={"type": "json_object"},
-          temperature=0.05,
-          max_tokens=150,
-      )
-      return json.loads(resp.choices[0].message.content)
-    except Exception:
-      continue
-
-  return _fallback_rule_triage(description, age, comorbidities)
-
-
 # ---------------------------------------------------------
 # 4. USER INTERFACE & DISPATCH PIPELINE
 # ---------------------------------------------------------
