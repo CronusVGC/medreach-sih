@@ -5,10 +5,12 @@ A machine learning ranking system that dynamically prioritizes healthcare facili
 ## Key Capabilities
 - Dynamic distance calculations via Haversine formulation.
 - Pairwise ranking optimization using XGBRanker.
-- Interactive Gradio web interface.
+- Interactive web interface.
 
 ## Setup & Execution
 ```bash
 pip install -r requirements.txt
 python app.py
 ```
+OR
+Click the link in the repository's description to go to the wesite
