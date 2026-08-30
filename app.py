@@ -45,21 +45,67 @@ def calculate_distance(lat1, lon1, lat2, lon2):
          np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) * np.sin(dlon / 2.0) ** 2)
     return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
 
-# Clinical parsing engine with multi-model fallback & rule-based safety net
+# Safety Fallback Rule-Based Engine
+def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
+    t = text.lower()
+    c = comorbidities.lower()
+    
+    # ESI 1: Immediate Resuscitation / Trauma / Hemorrhage
+    if any(k in t for k in [
+        "unconscious", "not breathing", "stopped breathing", "massive bleed", 
+        "bleeding heavily", "blood everywhere", "blood", "gunshot", "stab", 
+        "crash", "high speed", "accident", "struck", "collision", "hemorrhage"
+    ]):
+        return {
+            "suspected_condition": "Acute Critical Trauma / Severe Hemorrhage",
+            "severity_score": 4.9,
+            "medical_terms": ["Major external hemorrhage", "Polytrauma evaluation"]
+        }
+    # ESI 2: High Risk / Cranial / Cardiac
+    elif any(k in t for k in ["head", "sink", "chest", "heart", "stroke", "paralysis", "slurred", "faint"]):
+        return {
+            "suspected_condition": "Acute Cranial / Emergent Medical Event",
+            "severity_score": 4.3,
+            "medical_terms": ["Closed head injury", "Emergency evaluation required"]
+        }
+    # ESI 3: Urgent / Blunt / Fracture
+    elif any(k in t for k in ["broken", "fracture", "crush", "dropped", "bone", "foot", "heavy", "leg", "arm", "abdominal", "stomach"]):
+        base = 3.5 if (int(age) >= 60 or "diabetes" in c or "hypertension" in c) else 3.2
+        return {
+            "suspected_condition": "Acute Blunt Extremity Trauma / Fracture",
+            "severity_score": base,
+            "medical_terms": ["Blunt orthopedic trauma", "Diagnostic radiography indicated"]
+        }
+    # ESI 4: Less Urgent / Outpatient
+    elif any(k in t for k in ["cough", "fever", "sprain", "sore throat", "cold", "ear", "infection"]):
+        return {
+            "suspected_condition": "Routine Outpatient Presentation",
+            "severity_score": 2.1,
+            "medical_terms": ["Primary care evaluation"]
+        }
+    # ESI 5: Non-Urgent
+    else:
+        return {
+            "suspected_condition": "Non-Urgent Presentation",
+            "severity_score": 1.4,
+            "medical_terms": ["Superficial complaint"]
+        }
+
+# Clinical parsing engine with multi-model fallback & safety net
 @functools.lru_cache(maxsize=128)
 def get_triage(description: str, age: int, sex: str, comorbidities: str):
     if not client:
         return _fallback_rule_triage(description, age, comorbidities)
 
     system_prompt = (
-        "You are an Emergency Medicine Triage AI utilizing the Emergency Severity Index (ESI) algorithm.\n"
+        "You are an expert Emergency Medicine Triage AI utilizing the Emergency Severity Index (ESI) algorithm.\n"
         "Benchmark Severity Scores (1.0 to 5.0):\n"
-        "- ESI 1 (4.8 - 5.0): Resuscitation / Immediate life threat (arrest, severe respiratory distress, massive hemorrhage).\n"
-        "- ESI 2 (4.0 - 4.7): Emergent / High risk (ACS, stroke, testicular/ovarian torsion, deep heavy bleeding lacerations).\n"
+        "- ESI 1 (4.8 - 5.0): Resuscitation / Immediate life threat (arrest, severe respiratory distress, massive hemorrhage, high speed collision, open trauma).\n"
+        "- ESI 2 (4.0 - 4.7): Emergent / High risk (ACS, stroke, deep heavy bleeding lacerations, severe head trauma).\n"
         "- ESI 3 (2.8 - 3.9): Urgent / Multiple resources needed (blunt crush injuries, fractures, severe abdominal pain).\n"
         "- ESI 4 (1.8 - 2.7): Less urgent / 1 resource (simple sprains, mild infections, bronchitis).\n"
         "- ESI 5 (1.0 - 1.7): Non-urgent (suture removal, minor scrapes, medication refills).\n\n"
-        "Return ONLY a JSON object with keys:\n"
+        "Return ONLY a valid JSON object with keys:\n"
         "{\n"
         '  "suspected_condition": "Clinical condition summary",\n'
         '  "severity_score": 1.0 to 5.0,\n'
@@ -68,7 +114,7 @@ def get_triage(description: str, age: int, sex: str, comorbidities: str):
     )
     user_prompt = f"Patient: {age}yo {sex}, History: {comorbidities}\nIncident / Symptoms: \"{description}\""
 
-    # Attempt primary model
+    # Attempt active Groq models in sequence
     for model_name in ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-8b-8192"]:
         try:
             resp = client.chat.completions.create(
@@ -87,22 +133,7 @@ def get_triage(description: str, age: int, sex: str, comorbidities: str):
 
     return _fallback_rule_triage(description, age, comorbidities)
 
-def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
-    t = text.lower()
-    c = comorbidities.lower()
-    if any(k in t for k in ["unconscious", "not breathing", "stopped breathing", "massive bleed", "gunshot", "stab", "crash", "high speed"]):
-        return {"suspected_condition": "Acute Critical Trauma / Resuscitation", "severity_score": 4.9, "medical_terms": ["Critical polytrauma", "Immediate resuscitation"]}
-    elif any(k in t for k in ["head", "sink", "chest", "heart", "stroke", "paralysis", "slurred"]):
-        return {"suspected_condition": "Acute Cranial / Emergent Medical Event", "severity_score": 4.3, "medical_terms": ["Closed head injury", "Emergency evaluation"]}
-    elif any(k in t for k in ["broken", "fracture", "crush", "dropped", "bone", "foot", "heavy"]):
-        base = 3.4 if (int(age) >= 60 or "diabetes" in c) else 3.1
-        return {"suspected_condition": "Acute Blunt Trauma / Suspected Fracture", "severity_score": base, "medical_terms": ["Blunt extremity trauma", "Diagnostic imaging required"]}
-    elif any(k in t for k in ["cough", "fever", "sprain", "sore throat", "cold"]):
-        return {"suspected_condition": "Routine Outpatient Presentation", "severity_score": 2.1, "medical_terms": ["Primary care evaluation"]}
-    else:
-        return {"suspected_condition": "Non-Urgent Superficial Presentation", "severity_score": 1.4, "medical_terms": ["Superficial complaint"]}
-
-# Custom Styling
+# Custom Dark Styling
 st.markdown("""
 <style>
     .stApp { background-color: #030712; color: #f8fafc; }
