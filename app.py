@@ -75,15 +75,17 @@ def get_groq_client():
 # 2. VULNERABILITY SCALING & DISTANCE HELPERS
 # ---------------------------------------------------------
 def apply_age_vulnerability_scaling(base_score: float, age: int) -> float:
+  # Do not inflate explicitly routine/non-urgent visits (e.g. checkups)
+  if base_score <= 1.8:
+    return base_score
+
   age_val = int(age)
 
   if age_val <= 10:
     if base_score >= 2.5:
       adjusted = base_score * 1.22 + 0.30
-    elif base_score >= 1.6:
-      adjusted = base_score * 1.15 + 0.20
     else:
-      adjusted = base_score + 0.35
+      adjusted = base_score * 1.15 + 0.20
 
   elif age_val >= 50:
     if age_val >= 70:
@@ -93,10 +95,8 @@ def apply_age_vulnerability_scaling(base_score: float, age: int) -> float:
 
     if base_score >= 2.5:
       adjusted = base_score * age_factor + offset
-    elif base_score >= 1.6:
-      adjusted = base_score * (age_factor - 0.05) + (offset - 0.05)
     else:
-      adjusted = base_score + 0.25
+      adjusted = base_score * (age_factor - 0.05) + (offset - 0.05)
 
   else:
     adjusted = base_score
@@ -125,7 +125,41 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
   c = comorbidities.lower()
   age_val = int(age)
 
-  # 1. Obstetric & Gynecologic Emergencies
+  # 1. ROUTINE VISITS / CHECKUPS / PRENATAL CONSULTATIONS (ESI 4 / 5)
+  if any(
+      k in t
+      for k in [
+          "checkup",
+          "check up",
+          "routine",
+          "consultation",
+          "prenatal visit",
+          "antenatal",
+          "follow up",
+          "follow-up",
+          "regular visit",
+          "pregnancy test",
+          "ultrasound scan",
+      ]
+  ) and not any(
+      k in t
+      for k in [
+          "bleed",
+          "blood",
+          "severe pain",
+          "unconscious",
+          "water broke",
+          "contractions",
+      ]
+  ):
+    return {
+        "suspected_condition": (
+            "Routine Outpatient / Antenatal Care Consultation"
+        ),
+        "severity_score": 1.5,
+    }
+
+  # 2. OBSTETRIC EMERGENCIES (ESI 1 / 2)
   if any(
       k in t
       for k in [
@@ -166,7 +200,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": 4.5,
     }
 
-  # 2. Spinal & Neurotrauma
+  # 3. SPINAL & NEUROTRAUMA (ESI 2)
   if any(
       k in t
       for k in [
@@ -188,7 +222,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": 4.7,
     }
 
-  # 3. Traumatic Amputation & Severed Extremities
+  # 4. TRAUMATIC AMPUTATIONS (ESI 1)
   if any(
       k in t
       for k in [
@@ -211,7 +245,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": 4.9,
     }
 
-  # 4. Immediate Resuscitation / Arrest / Impending Death
+  # 5. IMMEDIATE RESUSCITATION / IMPENDING DEATH / CARDIAC ARREST (ESI 1)
   if any(
       k in t
       for k in [
@@ -246,7 +280,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": 5.0,
     }
 
-  # 5. Airway / Anaphylaxis
+  # 6. AIRWAY / ANAPHYLAXIS (ESI 1)
   if any(
       k in t
       for k in [
@@ -267,7 +301,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": 4.9,
     }
 
-  # 6. Open / Compound Fractures & Major Bone Trauma
+  # 7. OPEN / COMPOUND FRACTURES (ESI 2)
   if (
       any(k in t for k in ["bone", "fracture", "broken"])
       and any(
@@ -291,7 +325,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": 4.6,
     }
 
-  # 7. Ocular Trauma / Globe Rupture
+  # 8. OCULAR TRAUMA / GLOBE RUPTURE (ESI 2)
   if any(k in t for k in ["eye", "ocular", "vision", "blind", "cornea"]) and any(
       k in t
       for k in [
@@ -312,7 +346,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": 4.3,
     }
 
-  # 8. High-Risk Toxicology / Pediatric Fever
+  # 9. HIGH-RISK TOXICOLOGY / PEDIATRIC FEVER (ESI 2)
   if (
       any(
           k in t
@@ -353,7 +387,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": 4.5,
     }
 
-  # 9. Cranial / Cardiac
+  # 10. CRANIAL / CARDIAC (ESI 2)
   if any(
       k in t
       for k in [
@@ -373,7 +407,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": 4.3,
     }
 
-  # 10. Active Bleeding / Deep Lacerations
+  # 11. ACTIVE BLEEDING (ESI 2 / 3)
   if any(k in t for k in ["bleed", "bleeding", "blood"]):
     return {
         "suspected_condition": (
@@ -382,7 +416,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": 4.2,
     }
 
-  # 11. Closed Minor Fractures / Extremity Blunt Trauma
+  # 12. CLOSED FRACTURES / EXTREMITY BLUNT TRAUMA (ESI 3)
   if any(
       k in t
       for k in [
@@ -412,7 +446,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": base,
     }
 
-  # 12. Routine / Outpatient
+  # 13. ROUTINE / OUTPATIENT (ESI 4)
   if any(
       k in t
       for k in [
@@ -434,7 +468,7 @@ def _fallback_rule_triage(text: str, age: int, comorbidities: str) -> dict:
         "severity_score": 2.2,
     }
 
-  # 13. Non-Urgent
+  # 14. NON-URGENT (ESI 5)
   if any(
       k in t
       for k in [
@@ -468,24 +502,21 @@ def get_triage(description: str, age: int, sex: str, comorbidities: str):
   system_prompt = (
       "You are an expert Emergency Medicine Triage Physician AI utilizing the"
       " Emergency Severity Index (ESI) protocol.\n"
-      "Accurately score acute clinical acuity on a 1.0 to 5.0 scale.\n\n"
+      "Accurately score clinical acuity on a 1.0 to 5.0 scale.\n\n"
       "ESI CLINICAL BENCHMARKS:\n"
-      "- ESI 1 (Score 4.8 - 5.0): Resuscitation / Immediate Life Threat\n"
-      "  * Active obstetric hemorrhage, imminent delivery with complications,"
-      " cardiac arrest, respiratory arrest, traumatic amputations, massive"
-      " bleeding, dying.\n"
-      "- ESI 2 (Score 4.2 - 4.7): Emergent / High-Risk Condition\n"
-      "  * Spinal cord trauma, neck fractures with numbness/paralysis,"
-      " pregnancy complications/vaginal bleeding, open/compound bone fractures"
-      " (sticking out), femur/pelvis fractures, acute eye trauma, severe active"
-      " bleeding, stroke, chest pain.\n"
-      "- ESI 3 (Score 2.8 - 3.9): Urgent\n"
-      "  * Closed fractures (wrist, ankle, foot), blunt trauma, severe"
-      " abdominal pain without shock.\n"
-      "- ESI 4 (Score 1.8 - 2.7): Less Urgent\n"
-      "  * Simple joint sprains, low-speed falls, minor uncomplicated wounds.\n"
-      "- ESI 5 (Score 1.0 - 1.7): Non-Urgent\n"
-      "  * Superficial scratches, prescription refills, suture removal.\n\n"
+      "- ESI 1 (Score 4.8 - 5.0): Resuscitation / Immediate Life Threat (dying,"
+      " cardiac/respiratory arrest, amputations, massive bleeding, active"
+      " obstetric hemorrhage).\n"
+      "- ESI 2 (Score 4.2 - 4.7): Emergent / High Risk (spinal cord trauma,"
+      " stroke, chest pain, compound fractures, acute ocular trauma, ectopic"
+      " pregnancy rupture / severe cramping with bleeding).\n"
+      "- ESI 3 (Score 2.8 - 3.9): Urgent (closed fractures, blunt crush trauma,"
+      " severe abdominal pain).\n"
+      "- ESI 4 (Score 1.8 - 2.7): Less Urgent (simple sprains, mild fever/colds,"
+      " uncomplicated wounds).\n"
+      "- ESI 5 (Score 1.0 - 1.7): Non-Urgent / Routine Outpatient (routine"
+      " antenatal checkup / pregnancy consultation without acute symptoms,"
+      " minor scratches, suture removal, prescription refills).\n\n"
       "Return ONLY a JSON object:\n"
       "{\n"
       '  "suspected_condition": "Specific clinical diagnostic impression",\n'
@@ -546,6 +577,7 @@ with col_left:
       "Load Test Scenario",
       [
           "Custom",
+          "Routine Antenatal Checkup (2 wks)",
           "Traumatic Amputation (Hand)",
           "Pediatric High Fever (2yo)",
           "Acute Eye Bleeding",
@@ -554,7 +586,17 @@ with col_left:
           "Crush Injury (Foot)",
       ],
   )
-  if preset == "Traumatic Amputation (Hand)":
+  if preset == "Routine Antenatal Checkup (2 wks)":
+    default_desc, default_age, default_sex, default_meds = (
+        (
+            "Routine 2-week early pregnancy checkup, general wellness"
+            " consultation, no acute symptoms"
+        ),
+        27,
+        "Female",
+        "None",
+    )
+  elif preset == "Traumatic Amputation (Hand)":
     default_desc, default_age, default_sex, default_meds = (
         (
             "Complete traumatic amputation of right hand in industrial machinery"
